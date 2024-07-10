@@ -3,7 +3,9 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { VoxelWorld } from './VoxelWorld';
 
-const do_generateSphere = (cellsize, x, y, z) => (x*x+y*y+z*z <= cellsize*cellsize ? 1 : 0) 
+function randInt(min, max) {
+	return Math.floor(Math.random() * (max - min) + min);
+  }
 
 function main() {
 
@@ -11,6 +13,9 @@ function main() {
 	const renderer = new THREE.WebGLRenderer( { antialias: true, canvas } );
 
 	const cellSize = 32;
+	const tileSize = 16;
+	const tileTextureWidth = 256;
+	const tileTextureHeight = 64;
 
 	const fov = 75;
 	const aspect = 2; // the canvas default
@@ -39,7 +44,12 @@ function main() {
 	addLight( - 1, 2, 4 );
 	addLight( 1, - 1, - 2 );
 
-	const world = new VoxelWorld( cellSize );
+	const world = new VoxelWorld({
+		cellSize,
+		tileSize,
+		tileTextureWidth,
+		tileTextureHeight,
+	  });
 
 	for ( let y = 0; y < cellSize; ++ y ) {
 
@@ -51,13 +61,8 @@ function main() {
 				const height = ( Math.sin( x / cellSize * Math.PI * 2 ) + Math.sin( z / cellSize * Math.PI * 3 ) ) * ( cellSize / 6 ) + ( cellSize / 2 );
 				if ( y < height ) {
 
-					world.setVoxel( x, y, z, 1 );
+					world.setVoxel(x, y, z, randInt(1, 17));
 				}
-
-				// if(do_generateSphere(cellSize, x,y,z))
-				// {
-				// 	world.setVoxel( x, y, z, 1 );
-				// }
 
 			}
 
@@ -65,18 +70,34 @@ function main() {
 
 	}
 
-	const { positions, normals, indices } = world.generateGeometryDataForCell( 0, 0, 0 );
+
+	// const loader = new THREE.TextureLoader();
+	// const texture = loader.load('resources/images/minecraft/flourish-cc-by-nc-sa.png', render);
+	// texture.magFilter = THREE.NearestFilter;
+	// texture.minFilter = THREE.NearestFilter;
+	// texture.colorSpace = THREE.SRGBColorSpace;
+
+	const {positions, normals, uvs, indices} = world.generateGeometryDataForCell(0, 0, 0);
 	const geometry = new THREE.BufferGeometry();
-	const material = new THREE.MeshLambertMaterial( { color: 'green' } );
+	const material = new THREE.MeshLambertMaterial({
+		// map: texture,
+		side: THREE.DoubleSide,
+		alphaTest: 0.1,
+		transparent: true,
+	  });
 
 	const positionNumComponents = 3;
 	const normalNumComponents = 3;
+	const uvNumComponents = 2;
 	geometry.setAttribute(
 		'position',
 		new THREE.BufferAttribute( new Float32Array( positions ), positionNumComponents ) );
 	geometry.setAttribute(
 		'normal',
 		new THREE.BufferAttribute( new Float32Array( normals ), normalNumComponents ) );
+	geometry.setAttribute(
+		'uv',
+		new THREE.BufferAttribute(new Float32Array(uvs), uvNumComponents));
 	geometry.setIndex( indices );
 	const mesh = new THREE.Mesh( geometry, material );
 	scene.add( mesh );
