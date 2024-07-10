@@ -2,6 +2,7 @@ import './style.css'
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { VoxelWorld } from './VoxelWorld';
+import { SimplexNoise } from './simplex-noise';
 
 function randInt(min, max) {
 	return Math.floor(Math.random() * (max - min) + min);
@@ -11,6 +12,8 @@ function main() {
 
 	const canvas = document.getElementById( 'c' );
 	const renderer = new THREE.WebGLRenderer( { antialias: true, canvas } );
+
+	const simplex = new SimplexNoise(null)
 
 	const cellSize = 32;
 	const tileSize = 16;
@@ -22,14 +25,17 @@ function main() {
 	const near = 0.1;
 	const far = 1000;
 	const camera = new THREE.PerspectiveCamera( fov, aspect, near, far );
-	camera.position.set( - cellSize * .3, cellSize * .8, - cellSize * .3 );
+	camera.position.set(cellSize * .8, cellSize * .8, cellSize * .8 );
+	// camera.lookAt(new THREE.Vector3(cellSize,cellSize,cellSize))
 
 	const controls = new OrbitControls( camera, canvas );
-	controls.target.set( cellSize / 2, cellSize / 3, cellSize / 2 );
-	controls.update();
+	// controls.target.set( cellSize / 2, cellSize / 3, cellSize / 2 );
+	// controls.update();
 
 	const scene = new THREE.Scene();
 	scene.background = new THREE.Color( 'lightblue' );
+
+	scene.add(new THREE.AxesHelper(cellSize))
 
 	function addLight( x, y, z ) {
 
@@ -60,8 +66,8 @@ function main() {
 				// hills
 				const height = ( Math.sin( x / cellSize * Math.PI * 2 ) + Math.sin( z / cellSize * Math.PI * 3 ) ) * ( cellSize / 6 ) + ( cellSize / 2 );
 				if ( y < height ) {
-
-					world.setVoxel(x, y, z, randInt(1, 17));
+					console.log("simplex.prototype.noise3D(x,y,z)", simplex.noise3D(x,y,z))
+					world.setVoxel(x, y, z, 1);
 				}
 
 			}
@@ -71,16 +77,17 @@ function main() {
 	}
 
 
-	// const loader = new THREE.TextureLoader();
-	// const texture = loader.load('resources/images/minecraft/flourish-cc-by-nc-sa.png', render);
-	// texture.magFilter = THREE.NearestFilter;
-	// texture.minFilter = THREE.NearestFilter;
-	// texture.colorSpace = THREE.SRGBColorSpace;
+	const loader = new THREE.TextureLoader();
+	const texture = loader.load('./minecraft.png', render);
+	texture.magFilter = THREE.NearestFilter;
+	texture.minFilter = THREE.NearestFilter;
+	texture.colorSpace = THREE.SRGBColorSpace;
 
 	const {positions, normals, uvs, indices} = world.generateGeometryDataForCell(0, 0, 0);
+	console.log(positions)
 	const geometry = new THREE.BufferGeometry();
 	const material = new THREE.MeshLambertMaterial({
-		// map: texture,
+		map: texture,
 		side: THREE.DoubleSide,
 		alphaTest: 0.1,
 		transparent: true,
