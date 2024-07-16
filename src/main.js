@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { PointerLockControls } from 'three/examples/jsm/controls/PointerLockControls';
 import {createNoise3D} from 'simplex-noise';
 
-let scene, camera, renderer, controls;
+let scene, camera, renderer, controls, playerLight;
 let chunks = {};
 const CHUNK_SIZE = 16;
 const RENDER_DISTANCE = 3;
@@ -60,11 +60,15 @@ async function init() {
     controls = new PointerLockControls(camera, document.body);
     scene.add(controls.getObject());
 
-    scene.add(new THREE.AmbientLight(0xffffff, 0.5));
+    scene.add(new THREE.AmbientLight(0xffffff, 0.15));
     
-    const directionalLight = new THREE.DirectionalLight(0xffffff, 0.5);
-    directionalLight.position.set(1, 1, 1);
+    const directionalLight = new THREE.DirectionalLight(0xffffff, 0.25);
+    directionalLight.position.set(0, 0, 0);
     scene.add(directionalLight);
+
+    playerLight = new THREE.DirectionalLight(0xffffff, 0.15);
+    playerLight.position.set(0, 0, -1); 
+    camera.add(playerLight);
 
     document.addEventListener('click', () => controls.lock());
     document.addEventListener('keydown', onKeyDown);
@@ -95,24 +99,23 @@ function generateChunk(chunkX, chunkY, chunkZ) {
 
             for (let y = CHUNK_SIZE - 1; y >= 0; y--) {
                 const worldY = chunkY * CHUNK_SIZE + y;
-                
                 if (worldY <= 0 && shouldGenerateBlock(worldX, worldY, worldZ)) {
-                    if (isBlockVisible(worldX, worldY, worldZ)) {
+                    if (isBlockVisible(worldX, worldY, worldZ)) 
+                        {
                         matrix.setPosition(x, y, z);
                         earthMesh.setMatrixAt(earthMesh.count, matrix);
                         earthMesh.count++;
-                    }
 
-                    if (worldY === 0 && surfaceY === 0) {
-                        surfaceY = y;
+                        if (worldY === 0 && surfaceY === 0) {
+                            surfaceY = y;
+                        }
                     }
-                } else if (worldY === 0 && surfaceY === 0) {
+                }else if (worldY === 0 && surfaceY === 0) {
                     surfaceY = -1; // Marquer comme une entrée de caverne
                 }
             }
 
-            // Ajouter le bloc d'herbe s'il y a un bloc de terre en dessous
-            if (surfaceY >= 0) {
+            if (surfaceY == -1)  {
                 matrix.setPosition(x, surfaceY, z);
                 grassMesh.setMatrixAt(grassMesh.count, matrix);
                 grassMesh.count++;
@@ -143,20 +146,32 @@ function isBlockVisible(x, y, z) {
     return false;
 }
 
-
 function shouldGenerateBlock(x, y, z) {
-    const scale = 0.05;
-    const threshold = 0.3;
+    const scale = 0.075;
+    const threshold = 0.123;
     const noiseValue = simplex(x * scale, y * scale, z * scale);
     return noiseValue < threshold;
 }
-
 
 function placePlayer() {
     controls.getObject().position.set(CHUNK_SIZE/2, 2, CHUNK_SIZE/2);
 }
 
-const moveSpeed = 0.1;
+function updatePlayerLight() {
+    // Obtenir la direction actuelle de la caméra
+    const cameraDirection = new THREE.Vector3();
+    camera.getWorldDirection(cameraDirection);
+    
+    // Positionner la lumière légèrement au-dessus et devant le joueur
+    playerLight.position.copy(cameraDirection).add(new THREE.Vector3(0, 2, 0));
+    playerLight.target.position.copy(camera.position).add(cameraDirection);
+    
+    // S'assurer que la cible de la lumière est mise à jour
+    playerLight.target.updateMatrixWorld();
+}
+
+
+let isSprinting = false;
 const moveState = { forward: false, backward: false, left: false, right: false };
 
 function onKeyDown(event) {
@@ -165,6 +180,7 @@ function onKeyDown(event) {
         case 'KeyS': moveState.backward = true; break;
         case 'KeyA': moveState.left = true; break;
         case 'KeyD': moveState.right = true; break;
+        case 'ControlLeft': isSprinting = true; break;
     }
 }
 
@@ -174,11 +190,13 @@ function onKeyUp(event) {
         case 'KeyS': moveState.backward = false; break;
         case 'KeyA': moveState.left = false; break;
         case 'KeyD': moveState.right = false; break;
+        case 'ControlLeft': isSprinting = false; break;
     }
 }
 
 function updatePlayerPosition() {
     const direction = new THREE.Vector3();
+    const moveSpeed = isSprinting ? 0.25 : 0.1;
     controls.getDirection(direction);
     if (moveState.forward) controls.getObject().position.addScaledVector(direction, moveSpeed);
     if (moveState.backward) controls.getObject().position.addScaledVector(direction, -moveSpeed);
@@ -216,6 +234,7 @@ function animate() {
     requestAnimationFrame(animate);
     updatePlayerPosition();
     updateChunks();
+    updatePlayerLight();
     renderer.render(scene, camera);
 }
 
