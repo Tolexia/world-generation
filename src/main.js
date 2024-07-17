@@ -10,6 +10,13 @@ const simplex = createNoise3D();
 
 let grassMaterial, earthMaterial;
 
+// Nouvelle structure pour gérer les lumières de caverne
+const caveLights = {};
+const CAVE_LIGHT_DISTANCE = 20; // Distance maximale pour placer une lumière
+const CAVE_LIGHT_INTENSITY = 0.75; // Intensité de la lumière de caverne
+const MAX_CAVE_LIGHTS = 5
+let current_cave_lights = 0
+
 function loadTextures() {
     const textureLoader = new THREE.TextureLoader();
     const loadTexture = (path) => {
@@ -17,6 +24,9 @@ function loadTextures() {
             textureLoader.load(path, (texture) => {
                 texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
                 texture.repeat.set(1, 1);
+                // Ajoutez ces lignes pour éviter les artefacts aux bords
+                texture.magFilter = THREE.NearestFilter;
+                texture.minFilter = THREE.NearestMipmapLinearFilter;
                 resolve(texture);
             });
         });
@@ -34,14 +44,22 @@ function loadTextures() {
             map: grassCol,
             displacementMap: grassDisp,
             normalMap: grassNrm,
-            displacementScale: 0.1
+            displacementScale: 0.1,
+            transparent: false,
+            depthWrite: true,
+            polygonOffset: true,
+            polygonOffsetFactor: -4,
         });
 
         earthMaterial = new THREE.MeshStandardMaterial({
             map: earthCol,
             displacementMap: earthDisp,
             normalMap: earthNrm,
-            displacementScale: 0.1
+            displacementScale: -0.01,
+            transparent: false,
+            depthWrite: true,
+            polygonOffset: true,
+            polygonOffsetFactor: -4,
         });
     });
 }
@@ -60,15 +78,18 @@ async function init() {
     controls = new PointerLockControls(camera, document.body);
     scene.add(controls.getObject());
 
-    scene.add(new THREE.AmbientLight(0xffffff, 0.15));
+    // scene.add(new THREE.AmbientLight(0xffffff, 0.15));
     
-    const directionalLight = new THREE.DirectionalLight(0xffffff, 0.25);
-    directionalLight.position.set(0, 0, 0);
+    const directionalLight = new THREE.DirectionalLight(0xffffff, 0.35);
+    directionalLight.position.set(10, 10, 0);
     scene.add(directionalLight);
+    const directionalLight2 = new THREE.DirectionalLight(0xffffff, 0.35);
+    directionalLight2.position.set(0, 10, 10);
+    scene.add(directionalLight2);
 
-    playerLight = new THREE.DirectionalLight(0xffffff, 0.15);
-    playerLight.position.set(0, 0, -1); 
-    camera.add(playerLight);
+    // playerLight = new THREE.DirectionalLight(0xffffff, 0.15);
+    // playerLight.position.set(0, 0, -1); 
+    // camera.add(playerLight);
 
     document.addEventListener('click', () => controls.lock());
     document.addEventListener('keydown', onKeyDown);
@@ -79,7 +100,7 @@ async function init() {
     animate();
 }
 
-const geometry = new THREE.BoxGeometry(1, 1, 1);
+const geometry = new THREE.BoxGeometry(1.1, 1.1, 1.1);
 
 function generateChunk(chunkX, chunkY, chunkZ) {
     const chunkKey = `${chunkX},${chunkY},${chunkZ}`;
@@ -230,11 +251,74 @@ function updateChunks() {
     }
 }
 
+function updateCaveLights() {
+    const playerPosition = controls.getObject().position;
+    
+    if (playerPosition.y < 0) {
+        const direction = new THREE.Vector3();
+        controls.getDirection(direction);
+        
+        const raycaster = new THREE.Raycaster(playerPosition, direction);
+        
+        const sceneObjects = [];
+        scene.traverse((object) => {
+            if (object.isMesh) {
+                sceneObjects.push(object);
+            }
+        });
+        
+        const intersects = raycaster.intersectObjects(sceneObjects);
+        
+        if (intersects.length > 0) {
+            const intersection = intersects[0];
+            
+            if (intersection.distance <= CAVE_LIGHT_DISTANCE) {
+                // Calculer la position de la lumière entre le joueur et le point d'intersection
+                const lightPosition = new THREE.Vector3().addVectors(
+                    playerPosition,
+                    direction.multiplyScalar(intersection.distance * 0.9) // 90% de la distance vers le bloc
+                );
+                
+                // Vérifier si la nouvelle lumière est suffisamment éloignée des lumières existantes
+                let isTooClose = false;
+                for (const key in caveLights) {
+                    if (caveLights[key].position.distanceTo(lightPosition) < CAVE_LIGHT_DISTANCE) {
+                        isTooClose = true;
+                        break;
+                    }
+                }
+                
+                if (!isTooClose && current_cave_lights < MAX_CAVE_LIGHTS) {
+                    const lightKey = `${Math.round(lightPosition.x)},${Math.round(lightPosition.y)},${Math.round(lightPosition.z)}`;
+                    
+                    if (!caveLights[lightKey]) {
+                        const light = new THREE.PointLight(0xffaa00, CAVE_LIGHT_INTENSITY, CAVE_LIGHT_DISTANCE);
+                        light.position.copy(lightPosition);
+                        scene.add(light);
+                        caveLights[lightKey] = light;
+                        current_cave_lights++;
+                    }
+                }
+            }
+        }
+    }
+    
+    // Supprimer les lumières trop éloignées
+    for (const key in caveLights) {
+        const light = caveLights[key];
+        if (light.position.distanceTo(playerPosition) > CAVE_LIGHT_DISTANCE * 2) {
+            scene.remove(light);
+            delete caveLights[key];
+            current_cave_lights--;
+        }
+    }
+}
 function animate() {
     requestAnimationFrame(animate);
     updatePlayerPosition();
     updateChunks();
-    updatePlayerLight();
+    updateCaveLights();
+    // updatePlayerLight();
     renderer.render(scene, camera);
 }
 
