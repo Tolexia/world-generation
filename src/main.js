@@ -12,7 +12,7 @@ let grassMaterial, earthMaterial;
 
 // Nouvelle structure pour gérer les lumières de caverne
 const caveLights = {};
-const CAVE_LIGHT_DISTANCE = 20; // Distance maximale pour placer une lumière
+const CAVE_LIGHT_DISTANCE = 10; // Distance maximale pour placer une lumière
 const CAVE_LIGHT_INTENSITY = 0.75; // Intensité de la lumière de caverne
 const MAX_CAVE_LIGHTS = 5
 let current_cave_lights = 0
@@ -44,22 +44,22 @@ function loadTextures() {
             map: grassCol,
             displacementMap: grassDisp,
             normalMap: grassNrm,
-            displacementScale: 0.1,
-            transparent: false,
-            depthWrite: true,
-            polygonOffset: true,
-            polygonOffsetFactor: -4,
+            // displacementScale: 0.1,
+            // transparent: false,
+            // depthWrite: true,
+            // polygonOffset: true,
+            // polygonOffsetFactor: -4,
         });
 
         earthMaterial = new THREE.MeshStandardMaterial({
             map: earthCol,
             displacementMap: earthDisp,
             normalMap: earthNrm,
-            displacementScale: -0.01,
-            transparent: false,
-            depthWrite: true,
-            polygonOffset: true,
-            polygonOffsetFactor: -4,
+            displacementScale: 0,
+            // transparent: false,
+            // depthWrite: true,
+            // polygonOffset: true,
+            // polygonOffsetFactor: -4,
         });
     });
 }
@@ -71,7 +71,7 @@ async function init() {
     scene.background = new THREE.Color(0x87ceeb);
 
     camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-    renderer = new THREE.WebGLRenderer({ antialias: false });
+    renderer = new THREE.WebGLRenderer();
     renderer.setSize(window.innerWidth, window.innerHeight);
     document.body.appendChild(renderer.domElement);
 
@@ -100,7 +100,7 @@ async function init() {
     animate();
 }
 
-const geometry = new THREE.BoxGeometry(1.1, 1.1, 1.1);
+const geometry = new THREE.BoxGeometry(1, 1, 1);
 
 function generateChunk(chunkX, chunkY, chunkZ) {
     const chunkKey = `${chunkX},${chunkY},${chunkZ}`;
