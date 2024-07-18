@@ -3,6 +3,12 @@ import { PointerLockControls } from 'three/examples/jsm/controls/PointerLockCont
 import {createNoise3D} from 'simplex-noise';
 
 let scene, camera, renderer, controls, playerLight;
+
+let ambientLight, surfaceAmbientLight, caveAmbientLight;
+let caveFog;
+const CAVE_FOG_COLOR = 0x000000; // Couleur noire pour le fog des cavernes
+const CAVE_FOG_DENSITY = 0.15; // Ajustez cette valeur pour plus ou moins de fog
+
 let chunks = {};
 const CHUNK_SIZE = 16;
 const RENDER_DISTANCE = 3;
@@ -12,9 +18,9 @@ let grassMaterial, earthMaterial;
 
 // Nouvelle structure pour gérer les lumières de caverne
 const caveLights = {};
-const CAVE_LIGHT_DISTANCE = 10; // Distance maximale pour placer une lumière
-const CAVE_LIGHT_INTENSITY = 0.75; // Intensité de la lumière de caverne
-const MAX_CAVE_LIGHTS = 5
+const CAVE_LIGHT_DISTANCE = 10; // Distance maximale à laquelle une lumière est unload
+const CAVE_LIGHT_INTENSITY = 25.75; // Intensité de la lumière de caverne
+const MAX_CAVE_LIGHTS = 10
 let current_cave_lights = 0
 
 function loadTextures() {
@@ -71,27 +77,39 @@ async function init() {
     scene.background = new THREE.Color(0x87ceeb);
 
     camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-    renderer = new THREE.WebGLRenderer();
+    renderer = new THREE.WebGLRenderer({ antialias: false });
     renderer.setSize(window.innerWidth, window.innerHeight);
     document.body.appendChild(renderer.domElement);
 
     controls = new PointerLockControls(camera, document.body);
     scene.add(controls.getObject());
 
-    // scene.add(new THREE.AmbientLight(0xffffff, 0.15));
-    
-    const directionalLight = new THREE.DirectionalLight(0xffffff, 0.35);
-    directionalLight.position.set(10, 10, 0);
+    // Éclairage de surface
+    surfaceAmbientLight = new THREE.AmbientLight(0xffffff, 0.5);
+    scene.add(surfaceAmbientLight);
+
+    // Éclairage de caverne (initialement éteint)
+    caveAmbientLight = new THREE.AmbientLight(0xffffff, 0.1);
+    caveAmbientLight.visible = false;
+    scene.add(caveAmbientLight);
+
+    const directionalLight = new THREE.DirectionalLight(0xffffff, 0.5);
+    directionalLight.position.set(1, 1, 1);
     scene.add(directionalLight);
-    const directionalLight2 = new THREE.DirectionalLight(0xffffff, 0.35);
-    directionalLight2.position.set(0, 10, 10);
-    scene.add(directionalLight2);
 
-    // playerLight = new THREE.DirectionalLight(0xffffff, 0.15);
-    // playerLight.position.set(0, 0, -1); 
-    // camera.add(playerLight);
-
-    document.addEventListener('click', () => controls.lock());
+    // Créer le fog pour les cavernes (initialement désactivé)
+    caveFog = new THREE.FogExp2(CAVE_FOG_COLOR, CAVE_FOG_DENSITY);
+    
+    document.addEventListener('click', () => {
+        if(!controls.isLocked)
+            controls.lock() 
+        else{
+            if(controls.getObject().position.y < 0)
+            {
+                updateCaveLights()
+            }
+        }
+    });
     document.addEventListener('keydown', onKeyDown);
     document.addEventListener('keyup', onKeyUp);
 
@@ -111,6 +129,9 @@ function generateChunk(chunkX, chunkY, chunkZ) {
     earthMesh.count = 0;
     grassMesh.count = 0;
     const matrix = new THREE.Matrix4();
+    earthMaterial.fog = true;
+    grassMaterial.fog = true;
+
 
     for (let x = 0; x < CHUNK_SIZE; x++) {
         for (let z = 0; z < CHUNK_SIZE; z++) {
@@ -272,21 +293,22 @@ function updateCaveLights() {
         if (intersects.length > 0) {
             const intersection = intersects[0];
             
-            if (intersection.distance <= CAVE_LIGHT_DISTANCE) {
+            if (true) {
+            // if (intersection.distance <= CAVE_LIGHT_DISTANCE) {
                 // Calculer la position de la lumière entre le joueur et le point d'intersection
                 const lightPosition = new THREE.Vector3().addVectors(
                     playerPosition,
-                    direction.multiplyScalar(intersection.distance * 0.9) // 90% de la distance vers le bloc
+                    direction.multiplyScalar(intersection.distance * 0.8) // 90% de la distance vers le bloc
                 );
                 
                 // Vérifier si la nouvelle lumière est suffisamment éloignée des lumières existantes
                 let isTooClose = false;
-                for (const key in caveLights) {
-                    if (caveLights[key].position.distanceTo(lightPosition) < CAVE_LIGHT_DISTANCE) {
-                        isTooClose = true;
-                        break;
-                    }
-                }
+                // for (const key in caveLights) {
+                //     if (caveLights[key].position.distanceTo(lightPosition) < CAVE_LIGHT_DISTANCE) {
+                //         isTooClose = true;
+                //         break;
+                //     }
+                // }
                 
                 if (!isTooClose && current_cave_lights < MAX_CAVE_LIGHTS) {
                     const lightKey = `${Math.round(lightPosition.x)},${Math.round(lightPosition.y)},${Math.round(lightPosition.z)}`;
@@ -313,11 +335,27 @@ function updateCaveLights() {
         }
     }
 }
+function updateLightingAndFog() {
+    const playerPosition = controls.getObject().position;
+    
+    if (playerPosition.y < 0) {
+        // Joueur dans une caverne
+        surfaceAmbientLight.visible = false;
+        caveAmbientLight.visible = true;
+        scene.fog = caveFog;
+    } else {
+        // Joueur en surface
+        surfaceAmbientLight.visible = true;
+        caveAmbientLight.visible = false;
+        scene.fog = null;
+    }
+}
 function animate() {
     requestAnimationFrame(animate);
     updatePlayerPosition();
     updateChunks();
-    updateCaveLights();
+    updateLightingAndFog();
+    // updateCaveLights();
     // updatePlayerLight();
     renderer.render(scene, camera);
 }
