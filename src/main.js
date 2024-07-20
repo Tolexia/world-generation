@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { PointerLockControls } from 'three/examples/jsm/controls/PointerLockControls';
-import {createNoise3D} from 'simplex-noise';
+import {createNoise2D, createNoise3D} from 'simplex-noise';
 
 let scene, camera, renderer, controls, playerLight;
 
@@ -8,11 +8,15 @@ let ambientLight, surfaceAmbientLight, caveAmbientLight;
 let caveFog;
 const CAVE_FOG_COLOR = 0x000000; // Couleur noire pour le fog des cavernes
 const CAVE_FOG_DENSITY = 0.15; // Ajustez cette valeur pour plus ou moins de fog
+const SURFACE_HEIGHT = -2;
+const FOG_TRANSITION_HEIGHT = 5; // Hauteur au-dessus de la surface où le fog commence à apparaître
+const MAX_FOG_DENSITY = 0.15; // La densité maximale du fog dans les cavernes profondes
 
 let chunks = {};
 const CHUNK_SIZE = 16;
 const RENDER_DISTANCE = 3;
-const simplex = createNoise3D();
+const simplex3D = createNoise3D();
+const simplex2D = createNoise2D();
 
 let grassMaterial, earthMaterial;
 
@@ -50,11 +54,7 @@ function loadTextures() {
             map: grassCol,
             displacementMap: grassDisp,
             normalMap: grassNrm,
-            // displacementScale: 0.1,
-            // transparent: false,
-            // depthWrite: true,
-            // polygonOffset: true,
-            // polygonOffsetFactor: -4,
+            displacementScale: 0,
         });
 
         earthMaterial = new THREE.MeshStandardMaterial({
@@ -62,10 +62,6 @@ function loadTextures() {
             displacementMap: earthDisp,
             normalMap: earthNrm,
             displacementScale: 0,
-            // transparent: false,
-            // depthWrite: true,
-            // polygonOffset: true,
-            // polygonOffsetFactor: -4,
         });
     });
 }
@@ -129,38 +125,31 @@ function generateChunk(chunkX, chunkY, chunkZ) {
     earthMesh.count = 0;
     grassMesh.count = 0;
     const matrix = new THREE.Matrix4();
-    earthMaterial.fog = true;
-    grassMaterial.fog = true;
-
 
     for (let x = 0; x < CHUNK_SIZE; x++) {
         for (let z = 0; z < CHUNK_SIZE; z++) {
             const worldX = chunkX * CHUNK_SIZE + x;
             const worldZ = chunkZ * CHUNK_SIZE + z;
-            let surfaceY = 0;
+            const surfaceHeight = generateSurfaceHeight(worldX, worldZ);
 
-            for (let y = CHUNK_SIZE - 1; y >= 0; y--) {
+            for (let y = 0; y < CHUNK_SIZE; y++) {
                 const worldY = chunkY * CHUNK_SIZE + y;
-                if (worldY <= 0 && shouldGenerateBlock(worldX, worldY, worldZ)) {
-                    if (isBlockVisible(worldX, worldY, worldZ)) 
-                        {
-                        matrix.setPosition(x, y, z);
-                        earthMesh.setMatrixAt(earthMesh.count, matrix);
-                        earthMesh.count++;
-
-                        if (worldY === 0 && surfaceY === 0) {
-                            surfaceY = y;
+                
+                if (shouldGenerateBlock(worldX, worldY, worldZ)) {
+                    if (isBlockVisible(worldX, worldY, worldZ)) {
+                        if (worldY === surfaceHeight) {
+                            // C'est un bloc de surface, on utilise la texture d'herbe
+                            matrix.setPosition(x, y, z);
+                            grassMesh.setMatrixAt(grassMesh.count, matrix);
+                            grassMesh.count++;
+                        } else {
+                            // C'est un bloc sous la surface ou dans une caverne, on utilise la texture de terre
+                            matrix.setPosition(x, y, z);
+                            earthMesh.setMatrixAt(earthMesh.count, matrix);
+                            earthMesh.count++;
                         }
                     }
-                }else if (worldY === 0 && surfaceY === 0) {
-                    surfaceY = -1; // Marquer comme une entrée de caverne
                 }
-            }
-
-            if (surfaceY == -1)  {
-                matrix.setPosition(x, surfaceY, z);
-                grassMesh.setMatrixAt(grassMesh.count, matrix);
-                grassMesh.count++;
             }
         }
     }
@@ -188,15 +177,70 @@ function isBlockVisible(x, y, z) {
     return false;
 }
 
+function generateSurfaceHeight(x, z) {
+    const baseHeight = 0;
+    const hillHeight = 16;
+    const mountainHeight = 32;
+    const caveEntranceDepth = 16; // Augmenté pour des entrées plus profondes
+
+    const hillNoise = simplex2D(x * 0.01, z * 0.01) * 0.5 + 0.5;
+    const mountainNoise = simplex2D(x * 0.005, z * 0.005) * 0.5 + 0.5;
+    
+    const caveEntranceNoise = simplex2D(x * 0.02, z * 0.02);
+
+    let height = baseHeight + 
+                 hillHeight * hillNoise + 
+                 mountainHeight * Math.pow(mountainNoise, 3);
+
+    if (caveEntranceNoise > 0.75) {
+        height -= caveEntranceDepth * (caveEntranceNoise - 0.75) / 0.25;
+    }
+
+    return Math.max(0, Math.floor(height));
+}
+
 function shouldGenerateBlock(x, y, z) {
-    const scale = 0.075;
-    const threshold = 0.123;
-    const noiseValue = simplex(x * scale, y * scale, z * scale);
-    return noiseValue < threshold;
+    const surfaceHeight = generateSurfaceHeight(x, z);
+    const caveNoise = simplex3D(x * 0.075, y * 0.075, z * 0.075);
+
+    if (y <= surfaceHeight) {
+        if (y >= 4) {
+            return true;
+        } else {
+            const transitionFactor = Math.min(1, (surfaceHeight - y) / surfaceHeight);
+            const surfaceInfluence = Math.max(0, 1 - transitionFactor);
+            
+            const lowestCaveBlock = findLowestCaveBlock(x, z, surfaceHeight);
+            
+            if (surfaceHeight - lowestCaveBlock > 3) {
+                // Créer une transition plus graduelle
+                const transitionNoise = simplex3D(x * 0.1, y * 0.1, z * 0.1);
+                return transitionNoise < (0.5 + surfaceInfluence * 0.3);
+            } else {
+                return caveNoise < (0.123 + surfaceInfluence * 0.5);
+            }
+        }
+    }
+    
+    return false;
+}
+
+function findLowestCaveBlock(x, z, surfaceHeight) {
+    for (let y = surfaceHeight - 1; y >= 0; y--) {
+        const caveNoise = simplex3D(x * 0.075, y * 0.075, z * 0.075);
+        if (caveNoise >= 0.05) { // Seuil réduit pour plus de connexions
+            return y + 1;
+        }
+    }
+    return 0;
 }
 
 function placePlayer() {
-    controls.getObject().position.set(CHUNK_SIZE/2, 2, CHUNK_SIZE/2);
+    const startX = CHUNK_SIZE / 2;
+    const startZ = CHUNK_SIZE / 2;
+    const startY = generateSurfaceHeight(startX, startZ) + 2; // +2 pour être au-dessus du sol
+    console.log("startY", startY)
+    controls.getObject().position.set(startX, startY, startZ);
 }
 
 function updatePlayerLight() {
@@ -338,17 +382,35 @@ function updateCaveLights() {
 function updateLightingAndFog() {
     const playerPosition = controls.getObject().position;
     
-    if (playerPosition.y < 0) {
-        // Joueur dans une caverne
-        surfaceAmbientLight.visible = false;
-        caveAmbientLight.visible = true;
-        scene.fog = caveFog;
+    // Calculer la densité du fog en fonction de la position verticale du joueur
+    let fogDensity;
+    if (playerPosition.y >= SURFACE_HEIGHT + FOG_TRANSITION_HEIGHT) {
+        fogDensity = 0; // Pas de fog en surface
+    } else if (playerPosition.y <= SURFACE_HEIGHT) {
+        fogDensity = MAX_FOG_DENSITY; // Fog complet dans les cavernes
     } else {
-        // Joueur en surface
-        surfaceAmbientLight.visible = true;
-        caveAmbientLight.visible = false;
-        scene.fog = null;
+        // Transition progressive du fog
+        const transitionProgress = (SURFACE_HEIGHT + FOG_TRANSITION_HEIGHT - playerPosition.y) / FOG_TRANSITION_HEIGHT;
+        fogDensity = MAX_FOG_DENSITY * transitionProgress;
     }
+
+    // Mettre à jour la densité du fog
+    if (!scene.fog) {
+        scene.fog = new THREE.FogExp2(CAVE_FOG_COLOR, fogDensity);
+    } else {
+        scene.fog.density = fogDensity;
+    }
+
+    // Ajuster l'éclairage en fonction de la position
+    const surfaceLightIntensity = Math.max(0, Math.min(1, playerPosition.y / FOG_TRANSITION_HEIGHT));
+    const caveLightIntensity = 1 - surfaceLightIntensity;
+
+    surfaceAmbientLight.intensity = 0.5 * surfaceLightIntensity;
+    caveAmbientLight.intensity = 0.1 * caveLightIntensity;
+
+    // Rendre les deux lumières visibles en permanence pour une transition douce
+    surfaceAmbientLight.visible = true;
+    caveAmbientLight.visible = true;
 }
 function animate() {
     requestAnimationFrame(animate);
