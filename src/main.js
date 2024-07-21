@@ -8,15 +8,13 @@ const CHUNK_SIZE = 16;
 const RENDER_DISTANCE = 3;
 const WATER_LEVEL = 4; // Niveau de l'eau
 const WATER_COLOR = 0x0000cc; // Couleur de l'eau
-const SURFACE_HEIGHT = -2;
-const FOG_TRANSITION_HEIGHT = 5;
-const MAX_FOG_DENSITY = 0.15;
 
 const simplex2D = createNoise2D();
 const simplex3D = createNoise3D();
 
 let grassMaterial, earthMaterial;
 const waterMaterial =  createWaterMaterial();
+const caveMaterial = new THREE.MeshLambertMaterial({ color: 0x222222, transparent:true, opacity:0.1 });
 
 function init() {
     scene = new THREE.Scene();
@@ -29,13 +27,13 @@ function init() {
     scene.add(controls.getObject());
 
     scene.background = new THREE.Color(0x87ceeb);
-    scene.fog = new THREE.FogExp2(0x87ceeb, 0.01);
+    scene.fog = new THREE.FogExp2(0x111111, 0.01);
 
     const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
     scene.add(ambientLight);
 
     const directionalLight = new THREE.DirectionalLight(0xffffff, 0.6);
-    directionalLight.position.set(10, 10, 10);
+    directionalLight.position.set(10, 100, 10);
     scene.add(directionalLight);
 
     loadTextures().then(() => {
@@ -85,7 +83,7 @@ function createWaterMaterial() {
             void main() {
                 vUv = uv;
                 vec3 pos = position;
-                pos.y += sin(pos.x * 2.0 + time) * 0.05 + cos(pos.z * 2.0 + time) * 0.5;
+                pos.y += sin(pos.x * 2.0 + time) * 0.5 + cos(pos.z * 2.0 + time) * 0.5;
                 gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
             }
         `,
@@ -116,20 +114,29 @@ function shouldGenerateBlock(x, y, z) {
     const surfaceHeight = generateSurfaceHeight(x, z);
     if (y <= surfaceHeight) {
         const caveNoise = simplex3D(x * 0.05, y * 0.05, z * 0.05);
-        return caveNoise < 0.3;
+        return caveNoise <= -0.1;
     }
     return false;
+}
+
+function isInCavity(x, y, z) {
+    const caveNoise = simplex3D(x * 0.05, y * 0.05, z * 0.05);
+    return caveNoise > -0.4 && caveNoise <= -0.1;
+}
+
+function createInstancedMesh(geometry, material, count) {
+    return new THREE.InstancedMesh(geometry, material, count);
 }
 
 function generateChunk(chunkX, chunkY, chunkZ) {
     const chunkKey = `${chunkX},${chunkY},${chunkZ}`;
     if (chunks[chunkKey]) return;
 
-    const earthGeometry = new THREE.InstancedBufferGeometry().copy(new THREE.BoxGeometry(1, 1, 1));
-    const grassGeometry = new THREE.InstancedBufferGeometry().copy(new THREE.BoxGeometry(1, 1, 1));
-
-    const earthPositions = [];
-    const grassPositions = [];
+    const geometry = new THREE.BoxGeometry(1, 1, 1);
+    
+    const grassInstances = [];
+    const earthInstances = [];
+    const caveInstances = [];
 
     for (let x = 0; x < CHUNK_SIZE; x++) {
         for (let z = 0; z < CHUNK_SIZE; z++) {
@@ -141,51 +148,58 @@ function generateChunk(chunkX, chunkY, chunkZ) {
                 const worldY = chunkY * CHUNK_SIZE + y;
                 
                 if (shouldGenerateBlock(worldX, worldY, worldZ)) {
+                    const position = new THREE.Vector3(x, y, z);
                     if (worldY === surfaceHeight) {
-                        grassPositions.push(x, y, z);
+                        grassInstances.push(position);
+                    } else if (isInCavity(worldX, worldY, worldZ)) {
+                        caveInstances.push(position);
                     } else {
-                        earthPositions.push(x, y, z);
+                        earthInstances.push(position);
                     }
                 }
             }
         }
     }
 
-    const earthMesh = createInstancedMesh(earthGeometry, earthMaterial, earthPositions);
-    const grassMesh = createInstancedMesh(grassGeometry, grassMaterial, grassPositions);
+    const grassMesh = createInstancedMesh(geometry, grassMaterial, grassInstances.length);
+    const earthMesh = createInstancedMesh(geometry, earthMaterial, earthInstances.length);
+    const caveMesh = createInstancedMesh(geometry, caveMaterial, caveInstances.length);
 
-    earthMesh.position.set(chunkX * CHUNK_SIZE, chunkY * CHUNK_SIZE, chunkZ * CHUNK_SIZE);
-    grassMesh.position.set(chunkX * CHUNK_SIZE, chunkY * CHUNK_SIZE, chunkZ * CHUNK_SIZE);
+    const matrix = new THREE.Matrix4();
+    grassInstances.forEach((pos, i) => {
+        matrix.setPosition(pos);
+        grassMesh.setMatrixAt(i, matrix);
+    });
+    earthInstances.forEach((pos, i) => {
+        matrix.setPosition(pos);
+        earthMesh.setMatrixAt(i, matrix);
+    });
+    caveInstances.forEach((pos, i) => {
+        matrix.setPosition(pos);
+        caveMesh.setMatrixAt(i, matrix);
+    });
 
-    scene.add(earthMesh);
-    scene.add(grassMesh);
+    grassMesh.instanceMatrix.needsUpdate = true;
+    earthMesh.instanceMatrix.needsUpdate = true;
+    caveMesh.instanceMatrix.needsUpdate = true;
 
-    // Ajout de la surface d'eau
+    const chunkGroup = new THREE.Group();
+    chunkGroup.add(grassMesh, earthMesh, caveMesh);
+    chunkGroup.position.set(chunkX * CHUNK_SIZE, chunkY * CHUNK_SIZE, chunkZ * CHUNK_SIZE);
+    scene.add(chunkGroup);
+
+    // Water
     const waterGeometry = new THREE.PlaneGeometry(CHUNK_SIZE, CHUNK_SIZE);
     const waterMesh = new THREE.Mesh(waterGeometry, waterMaterial);
     waterMesh.rotation.x = -Math.PI / 2;
     waterMesh.position.set(
-        chunkX * CHUNK_SIZE + CHUNK_SIZE / 2,
-        WATER_LEVEL,
-        chunkZ * CHUNK_SIZE + CHUNK_SIZE / 2
+        CHUNK_SIZE / 2,
+        WATER_LEVEL - chunkY * CHUNK_SIZE,
+        CHUNK_SIZE / 2
     );
-    scene.add(waterMesh);
+    chunkGroup.add(waterMesh);
 
-    chunks[chunkKey] = { earthMesh, grassMesh, waterMesh };
-}
-
-function createInstancedMesh(geometry, material, positions) {
-    const instanceCount = positions.length / 3;
-    const mesh = new THREE.InstancedMesh(geometry, material, instanceCount);
-
-    const matrix = new THREE.Matrix4();
-    let index = 0;
-    for (let i = 0; i < instanceCount; i++) {
-        matrix.setPosition(positions[index++], positions[index++], positions[index++]);
-        mesh.setMatrixAt(i, matrix);
-    }
-
-    return mesh;
+    chunks[chunkKey] = { chunkGroup };
 }
 
 function generateInitialChunks() {
@@ -266,22 +280,6 @@ function updateChunks() {
     }
 }
 
-function updateLightingAndFog() {
-    const playerY = controls.getObject().position.y;
-    let fogDensity;
-    
-    if (playerY >= SURFACE_HEIGHT + FOG_TRANSITION_HEIGHT) {
-        fogDensity = 0.01; // Fog léger en surface
-    } else if (playerY <= SURFACE_HEIGHT) {
-        fogDensity = MAX_FOG_DENSITY; // Fog dense dans les cavernes
-    } else {
-        const transitionProgress = (SURFACE_HEIGHT + FOG_TRANSITION_HEIGHT - playerY) / FOG_TRANSITION_HEIGHT;
-        fogDensity = 0.01 + (MAX_FOG_DENSITY - 0.01) * transitionProgress;
-    }
-
-    scene.fog.density = fogDensity;
-}
-
 function onWindowResize() {
     camera.aspect = window.innerWidth / window.innerHeight;
     camera.updateProjectionMatrix();
@@ -292,7 +290,6 @@ function animate() {
     requestAnimationFrame(animate);
     updatePlayerPosition();
     updateChunks();
-    updateLightingAndFog();
 
     const time = clock.getElapsedTime()
     waterMaterial.uniforms.time.value = time * 0.5;
