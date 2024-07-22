@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { PointerLockControls } from 'three/examples/jsm/controls/PointerLockControls';
 import { createNoise2D, createNoise3D } from 'simplex-noise';
+import { InstancedUniformsMesh } from 'three-instanced-uniforms-mesh';
 
 let scene, camera, renderer, controls;
 let chunks = {};
@@ -15,6 +16,32 @@ const simplex3D = createNoise3D();
 let grassMaterial, earthMaterial;
 const waterMaterial =  createWaterMaterial();
 const caveMaterial = new THREE.MeshLambertMaterial({ color: 0x222222, transparent:true, opacity:0.1 });
+// const caveMaterial = new THREE.ShaderMaterial({
+//     uniforms: {
+//         time: { value: 0 },
+//         darkness: { value: 0 }
+//     },
+//     vertexShader: `
+//         varying vec3 vPosition;
+//         void main() {
+//             vPosition = position;
+//             gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+//         }
+//     `,
+//     fragmentShader: `
+//         uniform float time;
+//         uniform float darkness;
+//         varying vec3 vPosition;
+//         void main() {
+//             vec3 color = vec3(0.2, 0.2, 0.2);
+//             float noise = sin(vPosition.x * 0.1 + time) * sin(vPosition.y * 0.1 + time) * sin(vPosition.z * 0.1 + time);
+//             color += noise * 0.1;
+//             color *= (1.0 - darkness);
+//             gl_FragColor = vec4(color, 1.0);
+//         }
+//     `
+// });
+
 
 function init() {
     scene = new THREE.Scene();
@@ -163,7 +190,7 @@ function generateChunk(chunkX, chunkY, chunkZ) {
 
     const grassMesh = createInstancedMesh(geometry, grassMaterial, grassInstances.length);
     const earthMesh = createInstancedMesh(geometry, earthMaterial, earthInstances.length);
-    const caveMesh = createInstancedMesh(geometry, caveMaterial, caveInstances.length);
+    const caveMesh = new InstancedUniformsMesh(geometry, caveMaterial, caveInstances.length);
 
     const matrix = new THREE.Matrix4();
     grassInstances.forEach((pos, i) => {
@@ -177,6 +204,10 @@ function generateChunk(chunkX, chunkY, chunkZ) {
     caveInstances.forEach((pos, i) => {
         matrix.setPosition(pos);
         caveMesh.setMatrixAt(i, matrix);
+        
+        // Set individual darkness for each instance
+        const darkness = Math.random() * 0.5 + 0.5; // Random darkness between 0.5 and 1
+        caveMesh.setUniformAt('darkness', i, darkness);
     });
 
     grassMesh.instanceMatrix.needsUpdate = true;
@@ -293,6 +324,7 @@ function animate() {
 
     const time = clock.getElapsedTime()
     waterMaterial.uniforms.time.value = time * 0.5;
+    // caveMaterial.uniforms.time.value = time;
 
     renderer.render(scene, camera);
 }
