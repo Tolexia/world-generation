@@ -13,34 +13,8 @@ const WATER_COLOR = 0x0000cc; // Couleur de l'eau
 const simplex2D = createNoise2D();
 const simplex3D = createNoise3D();
 
-let grassMaterial, earthMaterial;
+let grassMaterial, earthMaterial, caveMaterial
 const waterMaterial =  createWaterMaterial();
-const caveMaterial = new THREE.MeshLambertMaterial({ color: 0x222222, transparent:true, opacity:0.1 });
-// const caveMaterial = new THREE.ShaderMaterial({
-//     uniforms: {
-//         time: { value: 0 },
-//         darkness: { value: 0 }
-//     },
-//     vertexShader: `
-//         varying vec3 vPosition;
-//         void main() {
-//             vPosition = position;
-//             gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-//         }
-//     `,
-//     fragmentShader: `
-//         uniform float time;
-//         uniform float darkness;
-//         varying vec3 vPosition;
-//         void main() {
-//             vec3 color = vec3(0.2, 0.2, 0.2);
-//             float noise = sin(vPosition.x * 0.1 + time) * sin(vPosition.y * 0.1 + time) * sin(vPosition.z * 0.1 + time);
-//             color += noise * 0.1;
-//             color *= (1.0 - darkness);
-//             gl_FragColor = vec4(color, 1.0);
-//         }
-//     `
-// });
 
 
 function init() {
@@ -92,9 +66,11 @@ function loadTextures() {
     return Promise.all([
         loadTexture('GRASS_COL.jpg'),
         loadTexture('EARTH_COL.jpg'),
-    ]).then(([grassTexture, earthTexture]) => {
+        loadTexture('CAVE_COL.png'),
+    ]).then(([grassTexture, earthTexture, caveTexture]) => {
         grassMaterial = new THREE.MeshLambertMaterial({ map: grassTexture });
         earthMaterial = new THREE.MeshLambertMaterial({ map: earthTexture });
+        caveMaterial = new THREE.MeshLambertMaterial({ color: 0x222222, map: caveTexture,transparent:true, opacity:0.1 });
     });
 }
 
