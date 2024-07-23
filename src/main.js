@@ -16,6 +16,8 @@ const simplex3D = createNoise3D();
 let grassMaterial, earthMaterial, caveMaterial
 let woodMaterial, leavesMaterial;
 let woodInstances, leavesInstances;
+let sandMaterial, stoneMaterial, snowMaterial;
+let sandInstances, stoneInstances, snowInstances;
 const waterMaterial =  createWaterMaterial();
 
 
@@ -71,12 +73,18 @@ function loadTextures() {
         loadTexture('EARTH_DARK_COL.png'),
         loadTexture('acacia_log.png'),
         loadTexture('acacia_leaves.png'),
-    ]).then(([grassTexture, earthTexture, caveTexture, woodTexture, leavesTexture]) => {
+        loadTexture('sand.png'),
+        loadTexture('stone.png'),
+        loadTexture('snow.png'),
+    ]).then(([grassTexture, earthTexture, caveTexture, woodTexture, leavesTexture, sandTexture, stoneTexture, snowTexture]) => {
         grassMaterial = new THREE.MeshLambertMaterial({ map: grassTexture });
         earthMaterial = new THREE.MeshLambertMaterial({ map: earthTexture });
         caveMaterial = new THREE.MeshLambertMaterial({ map: caveTexture });
         woodMaterial = new THREE.MeshLambertMaterial({ map: woodTexture });
         leavesMaterial = new THREE.MeshLambertMaterial({ map: leavesTexture, transparent:true, color:0x00AA00 });
+        sandMaterial = new THREE.MeshLambertMaterial({ map: sandTexture });
+        stoneMaterial = new THREE.MeshLambertMaterial({ map: stoneTexture });
+        snowMaterial = new THREE.MeshLambertMaterial({ map: snowTexture });
     });
 }
 
@@ -133,6 +141,23 @@ function isInCavity(x, y, z) {
     return caveNoise > -0.4 && caveNoise <= -0.1;
 }
 
+function isNearWater(x, y, z) {
+    return (y === 0 || y === 1) && (
+        simplex2D((x+1) * 0.02, z * 0.02) < WATER_LEVEL / 16 ||
+        simplex2D((x-1) * 0.02, z * 0.02) < WATER_LEVEL / 16 ||
+        simplex2D(x * 0.02, (z+1) * 0.02) < WATER_LEVEL / 16 ||
+        simplex2D(x * 0.02, (z-1) * 0.02) < WATER_LEVEL / 16
+    );
+}
+
+function isMountain(height) {
+    return height > 24; // Ajustez cette valeur selon vos besoins
+}
+
+function isSnowCapped(height) {
+    return height > 28; // Ajustez cette valeur selon vos besoins
+}
+
 function createInstancedMesh(geometry, material, count) {
     return new THREE.InstancedMesh(geometry, material, count);
 }
@@ -169,6 +194,9 @@ function generateChunk(chunkX, chunkY, chunkZ) {
     const caveInstances = [];
     woodInstances = [];
     leavesInstances = [];
+    sandInstances = [];
+    stoneInstances = [];
+    snowInstances = [];
 
     for (let x = 0; x < CHUNK_SIZE; x++) {
         for (let z = 0; z < CHUNK_SIZE; z++) {
@@ -182,11 +210,21 @@ function generateChunk(chunkX, chunkY, chunkZ) {
                 if (shouldGenerateBlock(worldX, worldY, worldZ)) {
                     const position = new THREE.Vector3(x, y, z);
                     if (worldY === surfaceHeight) {
-                        grassInstances.push(position);
-                        
-                        // Génération aléatoire d'arbres
-                        if (Math.random() < 0.02 && worldY > WATER_LEVEL) { // 2% de chance de générer un arbre au-dessus du niveau de l'eau
-                            generateTree(x, y + 1, z);
+                        if (isNearWater(worldX, worldY, worldZ)) {
+                            sandInstances.push(position);
+                        } else if (isMountain(surfaceHeight)) {
+                            if (isSnowCapped(surfaceHeight)) {
+                                snowInstances.push(position);
+                            } else {
+                                stoneInstances.push(position);
+                            }
+                        } else {
+                            grassInstances.push(position);
+                            
+                            // Génération aléatoire d'arbres (seulement sur l'herbe)
+                            if (Math.random() < 0.02 && worldY > WATER_LEVEL) {
+                                generateTree(x, y + 1, z);
+                            }
                         }
                     } else if (isInCavity(worldX, worldY, worldZ)) {
                         caveInstances.push(position);
@@ -203,16 +241,28 @@ function generateChunk(chunkX, chunkY, chunkZ) {
     const caveMesh = new InstancedUniformsMesh(geometry, caveMaterial, caveInstances.length);
     const woodMesh = createInstancedMesh(geometry, woodMaterial, woodInstances.length);
     const leavesMesh = createInstancedMesh(geometry, leavesMaterial, leavesInstances.length);
+    const sandMesh = createInstancedMesh(geometry, sandMaterial, sandInstances.length);
+    const stoneMesh = createInstancedMesh(geometry, stoneMaterial, stoneInstances.length);
+    const snowMesh = createInstancedMesh(geometry, snowMaterial, snowInstances.length);
 
     const matrix = new THREE.Matrix4();
-    grassInstances.forEach((pos, i) => {
-        matrix.setPosition(pos);
-        grassMesh.setMatrixAt(i, matrix);
-    });
-    earthInstances.forEach((pos, i) => {
-        matrix.setPosition(pos);
-        earthMesh.setMatrixAt(i, matrix);
-    });
+    
+    function setInstancedMeshPositions(mesh, instances) {
+        instances.forEach((pos, i) => {
+            matrix.setPosition(pos);
+            mesh.setMatrixAt(i, matrix);
+        });
+        mesh.instanceMatrix.needsUpdate = true;
+    }
+
+    setInstancedMeshPositions(grassMesh, grassInstances);
+    setInstancedMeshPositions(earthMesh, earthInstances);
+    setInstancedMeshPositions(woodMesh, woodInstances);
+    setInstancedMeshPositions(leavesMesh, leavesInstances);
+    setInstancedMeshPositions(sandMesh, sandInstances);
+    setInstancedMeshPositions(stoneMesh, stoneInstances);
+    setInstancedMeshPositions(snowMesh, snowInstances);
+
     caveInstances.forEach((pos, i) => {
         matrix.setPosition(pos);
         caveMesh.setMatrixAt(i, matrix);
@@ -220,23 +270,10 @@ function generateChunk(chunkX, chunkY, chunkZ) {
         const darkness = Math.random() * 0.5 + 0.5;
         caveMesh.setUniformAt('darkness', i, darkness);
     });
-    woodInstances.forEach((pos, i) => {
-        matrix.setPosition(pos);
-        woodMesh.setMatrixAt(i, matrix);
-    });
-    leavesInstances.forEach((pos, i) => {
-        matrix.setPosition(pos);
-        leavesMesh.setMatrixAt(i, matrix);
-    });
-
-    grassMesh.instanceMatrix.needsUpdate = true;
-    earthMesh.instanceMatrix.needsUpdate = true;
     caveMesh.instanceMatrix.needsUpdate = true;
-    woodMesh.instanceMatrix.needsUpdate = true;
-    leavesMesh.instanceMatrix.needsUpdate = true;
 
     const chunkGroup = new THREE.Group();
-    chunkGroup.add(grassMesh, earthMesh, caveMesh, woodMesh, leavesMesh);
+    chunkGroup.add(grassMesh, earthMesh, caveMesh, woodMesh, leavesMesh, sandMesh, stoneMesh, snowMesh);
     chunkGroup.position.set(chunkX * CHUNK_SIZE, chunkY * CHUNK_SIZE, chunkZ * CHUNK_SIZE);
     scene.add(chunkGroup);
 
@@ -339,7 +376,6 @@ function onWindowResize() {
 }
 const clock = new THREE.Clock()
 function animate() {
-    requestAnimationFrame(animate);
     updatePlayerPosition();
     updateChunks();
 
@@ -348,6 +384,7 @@ function animate() {
     // caveMaterial.uniforms.time.value = time;
 
     renderer.render(scene, camera);
+    requestAnimationFrame(animate);
 }
 
 init();
