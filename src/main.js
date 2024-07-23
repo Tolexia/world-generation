@@ -118,13 +118,13 @@ function createWaterMaterial() {
 
 function generateSurfaceHeight(x, z) {
     const baseHeight = 0;
-    const hillHeight = 16;
-    const mountainHeight = 32;
+    const hillHeight = 4;
+    const mountainHeight = 20;
 
-    const hillNoise = simplex2D(x * 0.02, z * 0.02) * 0.5 + 0.5;
-    const mountainNoise = simplex2D(x * 0.01, z * 0.01) * 0.5 + 0.5;
+    const hillNoise = simplex2D(x * 0.05, z * 0.05) * 0.5 + 0.5;
+    const mountainNoise = simplex2D(x * 0.015, z * 0.015) * 0.5 + 0.5;
 
-    return Math.floor(baseHeight + hillHeight * hillNoise + mountainHeight * Math.pow(mountainNoise, 3));
+    return Math.floor(baseHeight + hillHeight * hillNoise + mountainHeight * Math.pow(mountainNoise, 2));
 }
 
 function shouldGenerateBlock(x, y, z) {
