@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { PointerLockControls } from 'three/examples/jsm/controls/PointerLockControls';
 import { createNoise2D, createNoise3D } from 'simplex-noise';
 import { InstancedUniformsMesh } from 'three-instanced-uniforms-mesh';
+import VoxelWorld from './voxelworld';
 
 let scene, camera, renderer, controls;
 let chunks = {};
@@ -87,7 +88,19 @@ function loadTextures() {
         snowMaterial = new THREE.MeshLambertMaterial({ map: snowTexture });
     });
 }
+function createChunkMaterial() {
+    const loader = new THREE.TextureLoader();
+    const texture = loader.load('./atlas.png');
+    texture.magFilter = THREE.NearestFilter;
+    texture.minFilter = THREE.NearestFilter;
 
+    return new THREE.MeshLambertMaterial({
+        map: texture,
+        side: THREE.DoubleSide,
+        alphaTest: 0.1,
+        transparent: true,
+    });
+}
 function createWaterMaterial() {
     return new THREE.ShaderMaterial({
         uniforms: {
@@ -187,97 +200,59 @@ function generateChunk(chunkX, chunkY, chunkZ) {
     const chunkKey = `${chunkX},${chunkY},${chunkZ}`;
     if (chunks[chunkKey]) return;
 
-    const geometry = new THREE.BoxGeometry(1, 1, 1);
-    
-    const grassInstances = [];
-    const earthInstances = [];
-    const caveInstances = [];
-    woodInstances = [];
-    leavesInstances = [];
-    sandInstances = [];
-    stoneInstances = [];
-    snowInstances = [];
+    const world = new VoxelWorld({
+        cellSize: CHUNK_SIZE,
+        tileSize: 16,
+        tileTextureWidth: 256,
+        tileTextureHeight: 64,
+    });
 
-    for (let x = 0; x < CHUNK_SIZE; x++) {
+    // Remplir le monde de voxels
+    for (let y = 0; y < CHUNK_SIZE; y++) {
         for (let z = 0; z < CHUNK_SIZE; z++) {
-            const worldX = chunkX * CHUNK_SIZE + x;
-            const worldZ = chunkZ * CHUNK_SIZE + z;
-            const surfaceHeight = generateSurfaceHeight(worldX, worldZ);
-
-            for (let y = 0; y < CHUNK_SIZE; y++) {
+            for (let x = 0; x < CHUNK_SIZE; x++) {
+                const worldX = chunkX * CHUNK_SIZE + x;
                 const worldY = chunkY * CHUNK_SIZE + y;
-                
+                const worldZ = chunkZ * CHUNK_SIZE + z;
+                const surfaceHeight = generateSurfaceHeight(worldX, worldZ);
+
                 if (shouldGenerateBlock(worldX, worldY, worldZ)) {
-                    const position = new THREE.Vector3(x, y, z);
+                    let voxelType = 1; // Par défaut, bloc de terre
                     if (worldY === surfaceHeight) {
                         if (isNearWater(worldX, worldY, worldZ)) {
-                            sandInstances.push(position);
+                            voxelType = 2; // Sable
                         } else if (isMountain(surfaceHeight)) {
-                            if (isSnowCapped(surfaceHeight)) {
-                                snowInstances.push(position);
-                            } else {
-                                stoneInstances.push(position);
-                            }
+                            voxelType = isSnowCapped(surfaceHeight) ? 3 : 4; // Neige ou pierre
                         } else {
-                            grassInstances.push(position);
-                            
-                            // Génération aléatoire d'arbres (seulement sur l'herbe)
-                            if (Math.random() < 0.02 && worldY > WATER_LEVEL) {
-                                generateTree(x, y + 1, z);
-                            }
+                            voxelType = 5; // Herbe
                         }
                     } else if (isInCavity(worldX, worldY, worldZ)) {
-                        caveInstances.push(position);
-                    } else {
-                        earthInstances.push(position);
+                        voxelType = 6; // Caverne
                     }
+                    world.setVoxel(x, y, z, voxelType);
                 }
             }
         }
     }
 
-    const grassMesh = createInstancedMesh(geometry, grassMaterial, grassInstances.length);
-    const earthMesh = createInstancedMesh(geometry, earthMaterial, earthInstances.length);
-    const caveMesh = new InstancedUniformsMesh(geometry, caveMaterial, caveInstances.length);
-    const woodMesh = createInstancedMesh(geometry, woodMaterial, woodInstances.length);
-    const leavesMesh = createInstancedMesh(geometry, leavesMaterial, leavesInstances.length);
-    const sandMesh = createInstancedMesh(geometry, sandMaterial, sandInstances.length);
-    const stoneMesh = createInstancedMesh(geometry, stoneMaterial, stoneInstances.length);
-    const snowMesh = createInstancedMesh(geometry, snowMaterial, snowInstances.length);
+    // Générer la géométrie du chunk
+    const { positions, normals, uvs, indices } = world.generateGeometryDataForCell(0, 0, 0);
 
-    const matrix = new THREE.Matrix4();
-    
-    function setInstancedMeshPositions(mesh, instances) {
-        instances.forEach((pos, i) => {
-            matrix.setPosition(pos);
-            mesh.setMatrixAt(i, matrix);
-        });
-        mesh.instanceMatrix.needsUpdate = true;
-    }
+    const geometry = new THREE.BufferGeometry();
+    const material = createChunkMaterial();
 
-    setInstancedMeshPositions(grassMesh, grassInstances);
-    setInstancedMeshPositions(earthMesh, earthInstances);
-    setInstancedMeshPositions(woodMesh, woodInstances);
-    setInstancedMeshPositions(leavesMesh, leavesInstances);
-    setInstancedMeshPositions(sandMesh, sandInstances);
-    setInstancedMeshPositions(stoneMesh, stoneInstances);
-    setInstancedMeshPositions(snowMesh, snowInstances);
+    geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(positions), 3));
+    geometry.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(normals), 3));
+    geometry.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(uvs), 2));
+    geometry.setIndex(indices);
 
-    caveInstances.forEach((pos, i) => {
-        matrix.setPosition(pos);
-        caveMesh.setMatrixAt(i, matrix);
-        
-        const darkness = Math.random() * 0.5 + 0.5;
-        caveMesh.setUniformAt('darkness', i, darkness);
-    });
-    caveMesh.instanceMatrix.needsUpdate = true;
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.position.set(chunkX * CHUNK_SIZE, chunkY * CHUNK_SIZE, chunkZ * CHUNK_SIZE);
+
+    scene.add(mesh);
+    chunks[chunkKey] = { mesh };
 
     const chunkGroup = new THREE.Group();
-    chunkGroup.add(grassMesh, earthMesh, caveMesh, woodMesh, leavesMesh, sandMesh, stoneMesh, snowMesh);
-    chunkGroup.position.set(chunkX * CHUNK_SIZE, chunkY * CHUNK_SIZE, chunkZ * CHUNK_SIZE);
-    scene.add(chunkGroup);
-
-    // Water (inchangé)
     const waterGeometry = new THREE.PlaneGeometry(CHUNK_SIZE, CHUNK_SIZE);
     const waterMesh = new THREE.Mesh(waterGeometry, waterMaterial);
     waterMesh.rotation.x = -Math.PI / 2;
@@ -286,11 +261,9 @@ function generateChunk(chunkX, chunkY, chunkZ) {
         WATER_LEVEL - chunkY * CHUNK_SIZE,
         CHUNK_SIZE / 2
     );
-    chunkGroup.add(waterMesh);
 
-    chunks[chunkKey] = { chunkGroup };
+    chunks[chunkKey] = { waterMesh };
 }
-
 function generateInitialChunks() {
     for (let x = -RENDER_DISTANCE; x <= RENDER_DISTANCE; x++) {
         for (let y = -RENDER_DISTANCE; y <= RENDER_DISTANCE; y++) {
@@ -356,19 +329,17 @@ function updateChunks() {
         }
     }
 
+    // Supprimer les chunks hors de portée
     for (let chunkKey in chunks) {
         const [cx, cy, cz] = chunkKey.split(',').map(Number);
         if (Math.abs(cx - playerChunkX) > RENDER_DISTANCE ||
             Math.abs(cy - playerChunkY) > RENDER_DISTANCE ||
             Math.abs(cz - playerChunkZ) > RENDER_DISTANCE) {
-            scene.remove(chunks[chunkKey].earthMesh);
-            scene.remove(chunks[chunkKey].grassMesh);
-            scene.remove(chunks[chunkKey].waterMesh);
+            scene.remove(chunks[chunkKey].mesh);
             delete chunks[chunkKey];
         }
     }
 }
-
 function onWindowResize() {
     camera.aspect = window.innerWidth / window.innerHeight;
     camera.updateProjectionMatrix();
