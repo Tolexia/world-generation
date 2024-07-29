@@ -194,11 +194,16 @@ const simplex3D = createNoise3D();
 
 let grassMaterial, earthMaterial, caveMaterial
 let woodMaterial, leavesMaterial;
-let woodInstances = [], leavesInstances = [];
+let woodInstances = [], leavesInstances = [], waterInstances = [];
 let sandMaterial, stoneMaterial, snowMaterial;
 let sandInstances, stoneInstances, snowInstances;
-const waterInstances = []
-const waterMaterial =  createWaterMaterial();
+
+// const waterMaterial =  createWaterMaterial();
+const waterMaterial = new THREE.MeshPhongMaterial({
+    color: 0x0077be,
+    transparent: true,
+    opacity: 0.6,
+});
 
 
 function init() {
@@ -277,8 +282,8 @@ function createChunkMaterial() {
 
     return new THREE.MeshLambertMaterial({
         map: texture,
-        side: THREE.DoubleSide,
-        alphaTest: 0.1,
+        // side: THREE.DoubleSide,
+        // alphaTest: 0.1,
         transparent: true,
     });
 }
@@ -291,18 +296,27 @@ function createWaterMaterial() {
         vertexShader: `
             uniform float time;
             varying vec2 vUv;
+            varying vec3 vPosition;
             void main() {
                 vUv = uv;
+                vPosition = position;
                 vec3 pos = position;
-                pos.y += sin(pos.x * 2.0 + time) * 0.5 + cos(pos.z * 2.0 + time) * 0.5;
+                pos.y += sin(pos.x * 2.0 + time) * 0.1 + cos(pos.z * 2.0 + time) * 0.1;
                 gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
             }
         `,
         fragmentShader: `
             uniform vec3 color;
+            uniform float time;
             varying vec2 vUv;
+            varying vec3 vPosition;
             void main() {
-                gl_FragColor = vec4(color, 0.1);
+                float depth = gl_FragCoord.z / gl_FragCoord.w;
+                float fogFactor = smoothstep(1.0, 5.0, depth);
+                vec3 fogColor = vec3(0.0, 0.1, 0.2);
+                vec3 finalColor = mix(color, fogColor, fogFactor);
+                float alpha = 0.6 + sin(vPosition.x * 0.1 + vPosition.z * 0.1 + time * 2.0) * 0.1;
+                gl_FragColor = vec4(finalColor, alpha);
             }
         `,
         transparent: true
@@ -315,8 +329,8 @@ function generateSurfaceHeight(x, z) {
     const hillHeight = 4;
     const mountainHeight = 20;
 
-    const hillNoise = simplex2D(x * 0.05, z * 0.05) * 0.5 + 0.5;
-    const mountainNoise = simplex2D(x * 0.015, z * 0.015) * 0.5 + 0.5;
+    const hillNoise = simplex2D(x * 0.08, z * 0.08) + 0.5;
+    const mountainNoise = simplex2D(x * 0.015, z * 0.015)  + 0.5;
 
     return Math.floor(baseHeight + hillHeight * hillNoise + mountainHeight * Math.pow(mountainNoise, 2));
 }
@@ -385,9 +399,11 @@ function generateChunk(chunkX, chunkY, chunkZ) {
     const world = new VoxelWorld({
         cellSize: CHUNK_SIZE,
         tileSize: 16,
-        tileTextureWidth: 96,
+        tileTextureWidth: 112,
         tileTextureHeight: 48,
     });
+
+    woodInstances = [], leavesInstances = [], waterInstances = []
 
     // Remplir le monde de voxels
     for (let y = 0; y < CHUNK_SIZE; y++) {
@@ -413,9 +429,9 @@ function generateChunk(chunkX, chunkY, chunkZ) {
                         else 
                         {
                             voxelType = 5; // Herbe
-                            // Génération aléatoire d'arbres (seulement sur l'herbe)
-                            if (Math.random() < 0.002 && worldY > WATER_LEVEL) {
-                                generateTree(x, y, z);
+                            // Génération aléatoire d'arbres (seulement sur l'herbe) 
+                            if (worldY === surfaceHeight && worldY > WATER_LEVEL && voxelType === 5 && Math.random() < 0.02) {
+                                generateTree(x, y + 1, z);
                             }
                         }
                     } 
@@ -425,10 +441,9 @@ function generateChunk(chunkX, chunkY, chunkZ) {
                     }
                     world.setVoxel(x, y, z, voxelType);
                 }
-                // else if(worldY == WATER_LEVEL)
-                // {
-                //     waterInstances.push(new THREE.Vector3(x, y, z))
-                // }
+                else if (worldY <= WATER_LEVEL) {
+                    waterInstances.push(new THREE.Vector3(x, y, z))
+                }
             }
         }
     }
@@ -458,14 +473,14 @@ function generateChunk(chunkX, chunkY, chunkZ) {
     const instanced_mesh_geometry = new THREE.BoxGeometry(1, 1, 1);
     const woodMesh = createInstancedMesh(instanced_mesh_geometry, woodMaterial, woodInstances.length);
     const leavesMesh = createInstancedMesh(instanced_mesh_geometry, leavesMaterial, leavesInstances.length);
-    // const waterMesh = createInstancedMesh(instanced_mesh_geometry, waterMaterial, waterInstances.length);
+    const waterMesh = new InstancedUniformsMesh(instanced_mesh_geometry, waterMaterial, waterInstances.length);
     setInstancedMeshPositions(woodMesh, woodInstances);
     setInstancedMeshPositions(leavesMesh, leavesInstances);
-    // setInstancedMeshPositions(waterMesh, waterInstances);
+    setInstancedMeshPositions(waterMesh, waterInstances);
 
 
     const chunkGroup = new THREE.Group();
-    chunkGroup.add(mesh, woodMesh, leavesMesh);
+    chunkGroup.add(mesh, woodMesh, leavesMesh, waterMesh);
     chunkGroup.position.set(chunkX * CHUNK_SIZE, chunkY * CHUNK_SIZE, chunkZ * CHUNK_SIZE);
     scene.add(chunkGroup);
 
@@ -562,8 +577,19 @@ function onWindowResize() {
     camera.updateProjectionMatrix();
     renderer.setSize(window.innerWidth, window.innerHeight);
 }
+function updateUnderwaterEffect() {
+    const playerY = controls.getObject().position.y;
+    if (playerY < WATER_LEVEL) {
+        scene.fog = new THREE.FogExp2(0x0077be, 0.1);
+        renderer.setClearColor(0x0077be);
+    } else {
+        scene.fog = null;
+        renderer.setClearColor(0x87ceeb); // Couleur du ciel
+    }
+}
 const clock = new THREE.Clock()
 function animate() {
+    // updateUnderwaterEffect();
     updatePlayerPosition();
     updateChunks();
 
