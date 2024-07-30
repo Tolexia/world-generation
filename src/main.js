@@ -198,12 +198,21 @@ let woodInstances = [], leavesInstances = [], waterInstances = [];
 let sandMaterial, stoneMaterial, snowMaterial;
 let sandInstances, stoneInstances, snowInstances;
 
+const INITIAL_RENDER_DISTANCE = RENDER_DISTANCE * 2;
+let lastPlayerChunk = { x: 0, y: 0, z: 0 };
+const CHUNK_UPDATE_INTERVAL = 500; // Millisecondes
+let lastChunkUpdateTime = 0;
+
 // const waterMaterial =  createWaterMaterial();
 const waterMaterial = new THREE.MeshPhongMaterial({
     color: 0x0077be,
     transparent: true,
-    opacity: 0.6,
+    opacity: 0.95,
 });
+
+const instanced_mesh_geometry = new THREE.BoxGeometry(1, 1, 1);
+const instanced_water_geometry = new THREE.PlaneGeometry(1, 1, 1);
+instanced_water_geometry.rotateX( -Math.PI / 2)
 
 
 function init() {
@@ -296,27 +305,18 @@ function createWaterMaterial() {
         vertexShader: `
             uniform float time;
             varying vec2 vUv;
-            varying vec3 vPosition;
             void main() {
                 vUv = uv;
-                vPosition = position;
                 vec3 pos = position;
-                pos.y += sin(pos.x * 2.0 + time) * 0.1 + cos(pos.z * 2.0 + time) * 0.1;
+                pos.y += sin(pos.x * 2.0 + time) * 0.5 + cos(pos.z * 2.0 + time) * 0.5;
                 gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
             }
         `,
         fragmentShader: `
             uniform vec3 color;
-            uniform float time;
             varying vec2 vUv;
-            varying vec3 vPosition;
             void main() {
-                float depth = gl_FragCoord.z / gl_FragCoord.w;
-                float fogFactor = smoothstep(1.0, 5.0, depth);
-                vec3 fogColor = vec3(0.0, 0.1, 0.2);
-                vec3 finalColor = mix(color, fogColor, fogFactor);
-                float alpha = 0.6 + sin(vPosition.x * 0.1 + vPosition.z * 0.1 + time * 2.0) * 0.1;
-                gl_FragColor = vec4(finalColor, alpha);
+                gl_FragColor = vec4(color, 0.1);
             }
         `,
         transparent: true
@@ -429,7 +429,7 @@ function generateChunk(chunkX, chunkY, chunkZ) {
                         else 
                         {
                             voxelType = 5; // Herbe
-                            // Génération aléatoire d'arbres (seulement sur l'herbe) 
+                            // Génération aléatoire d'arbres (seulement sur l'herbe)
                             if (worldY === surfaceHeight && worldY > WATER_LEVEL && voxelType === 5 && Math.random() < 0.02) {
                                 generateTree(x, y + 1, z);
                             }
@@ -441,8 +441,9 @@ function generateChunk(chunkX, chunkY, chunkZ) {
                     }
                     world.setVoxel(x, y, z, voxelType);
                 }
-                else if (worldY <= WATER_LEVEL) {
-                    waterInstances.push(new THREE.Vector3(x, y, z))
+                else if(worldY == WATER_LEVEL)
+                {
+                    waterInstances.push(new THREE.Vector3(x+0.5, y+0.2, z+0.5))
                 }
             }
         }
@@ -470,10 +471,10 @@ function generateChunk(chunkX, chunkY, chunkZ) {
         });
         mesh.instanceMatrix.needsUpdate = true;
     }
-    const instanced_mesh_geometry = new THREE.BoxGeometry(1, 1, 1);
+    
     const woodMesh = createInstancedMesh(instanced_mesh_geometry, woodMaterial, woodInstances.length);
     const leavesMesh = createInstancedMesh(instanced_mesh_geometry, leavesMaterial, leavesInstances.length);
-    const waterMesh = new InstancedUniformsMesh(instanced_mesh_geometry, waterMaterial, waterInstances.length);
+    const waterMesh = createInstancedMesh(instanced_water_geometry, waterMaterial, waterInstances.length);
     setInstancedMeshPositions(woodMesh, woodInstances);
     setInstancedMeshPositions(leavesMesh, leavesInstances);
     setInstancedMeshPositions(waterMesh, waterInstances);
@@ -497,13 +498,15 @@ function generateChunk(chunkX, chunkY, chunkZ) {
     chunks[chunkKey] = { chunkGroup };
 }
 function generateInitialChunks() {
-    // for (let x = -RENDER_DISTANCE; x <= RENDER_DISTANCE; x++) {
-    //     for (let y = -RENDER_DISTANCE; y <= RENDER_DISTANCE; y++) {
-    //         for (let z = -RENDER_DISTANCE; z <= RENDER_DISTANCE; z++) {
-                generateChunk(0, 0, 0);
-    //         }
-    //     }
-    // }
+    const playerChunk = getPlayerChunk();
+    for (let x = -INITIAL_RENDER_DISTANCE; x <= INITIAL_RENDER_DISTANCE; x++) {
+        for (let y = -INITIAL_RENDER_DISTANCE; y <= INITIAL_RENDER_DISTANCE; y++) {
+            for (let z = -INITIAL_RENDER_DISTANCE; z <= INITIAL_RENDER_DISTANCE; z++) {
+                generateChunk(playerChunk.x + x, playerChunk.y + y, playerChunk.z + z);
+            }
+        }
+    }
+    lastPlayerChunk = playerChunk;
 }
 
 function placePlayer() {
@@ -547,58 +550,81 @@ function updatePlayerPosition() {
     if (moveState.right) controls.getObject().position.addScaledVector(direction.cross(new THREE.Vector3(0, 1, 0)).normalize(), speed);
 }
 
-function updateChunks() {
+function getPlayerChunk() {
     const position = controls.getObject().position;
-    const playerChunkX = Math.floor(position.x / CHUNK_SIZE);
-    const playerChunkY = Math.floor(position.y / CHUNK_SIZE);
-    const playerChunkZ = Math.floor(position.z / CHUNK_SIZE);
+    return {
+        x: Math.floor(position.x / CHUNK_SIZE),
+        y: Math.floor(position.y / CHUNK_SIZE),
+        z: Math.floor(position.z / CHUNK_SIZE)
+    };
+}
 
-    for (let x = -RENDER_DISTANCE; x <= RENDER_DISTANCE; x++) {
-        for (let y = -RENDER_DISTANCE; y <= RENDER_DISTANCE; y++) {
-            for (let z = -RENDER_DISTANCE; z <= RENDER_DISTANCE; z++) {
-                generateChunk(playerChunkX + x, playerChunkY + y, playerChunkZ + z);
+function updateChunks() {
+    const currentTime = Date.now();
+    if (currentTime - lastChunkUpdateTime < CHUNK_UPDATE_INTERVAL) return;
+
+    const playerChunk = getPlayerChunk();
+    if (playerChunk.x !== lastPlayerChunk.x || 
+        playerChunk.y !== lastPlayerChunk.y || 
+        playerChunk.z !== lastPlayerChunk.z) {
+        
+        for (let x = -RENDER_DISTANCE; x <= RENDER_DISTANCE; x++) {
+            for (let y = -RENDER_DISTANCE; y <= RENDER_DISTANCE; y++) {
+                for (let z = -RENDER_DISTANCE; z <= RENDER_DISTANCE; z++) {
+                    const chunkX = playerChunk.x + x;
+                    const chunkY = playerChunk.y + y;
+                    const chunkZ = playerChunk.z + z;
+                    const chunkKey = `${chunkX},${chunkY},${chunkZ}`;
+                    
+                    if (!chunks[chunkKey]) {
+                        generateChunk(chunkX, chunkY, chunkZ);
+                    }
+                }
             }
         }
+
+        // Supprimer les chunks trop éloignés
+        for (let chunkKey in chunks) {
+            const [cx, cy, cz] = chunkKey.split(',').map(Number);
+            if (Math.abs(cx - playerChunk.x) > RENDER_DISTANCE ||
+                Math.abs(cy - playerChunk.y) > RENDER_DISTANCE ||
+                Math.abs(cz - playerChunk.z) > RENDER_DISTANCE) {
+                scene.remove(chunks[chunkKey].chunkGroup);
+                delete chunks[chunkKey];
+            }
+        }
+
+        lastPlayerChunk = playerChunk;
     }
 
-    // Supprimer les chunks hors de portée
-    for (let chunkKey in chunks) {
-        const [cx, cy, cz] = chunkKey.split(',').map(Number);
-        if (Math.abs(cx - playerChunkX) > RENDER_DISTANCE ||
-            Math.abs(cy - playerChunkY) > RENDER_DISTANCE ||
-            Math.abs(cz - playerChunkZ) > RENDER_DISTANCE) {
-            scene.remove(chunks[chunkKey].mesh);
-            delete chunks[chunkKey];
-        }
-    }
+    lastChunkUpdateTime = currentTime;
 }
 function onWindowResize() {
     camera.aspect = window.innerWidth / window.innerHeight;
     camera.updateProjectionMatrix();
     renderer.setSize(window.innerWidth, window.innerHeight);
 }
+
 function updateUnderwaterEffect() {
     const playerY = controls.getObject().position.y;
-    if (playerY < WATER_LEVEL) {
-        scene.fog = new THREE.FogExp2(0x0077be, 0.1);
+    if (playerY <= WATER_LEVEL) {
+        scene.fog = new THREE.FogExp2(0x0077be, 0.2);
         renderer.setClearColor(0x0077be);
     } else {
         scene.fog = null;
         renderer.setClearColor(0x87ceeb); // Couleur du ciel
     }
 }
+
 const clock = new THREE.Clock()
 function animate() {
-    // updateUnderwaterEffect();
+    updateUnderwaterEffect();
     updatePlayerPosition();
     updateChunks();
 
-    const time = clock.getElapsedTime()
-    // waterMaterial.uniforms.time.value = time * 0.5;
-    // caveMaterial.uniforms.time.value = time;
+    const time = clock.getElapsedTime();
 
     renderer.render(scene, camera);
     requestAnimationFrame(animate);
 }
-
 init();
