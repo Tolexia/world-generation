@@ -37,12 +37,28 @@ const instanced_water_geometry = new THREE.PlaneGeometry(1, 1, 1);
 instanced_water_geometry.rotateX( -Math.PI / 2)
 
 
-function init() {
+let loadingProgress = 0;
+
+function updateLoadingScreen(progress) {
+    loadingProgress = progress;
+    document.getElementById('loading-bar').style.width = `${progress}%`;
+    document.getElementById('loading-text').textContent = `Chargement: ${Math.round(progress)}%`;
+}
+
+function hideLoadingScreen() {
+    document.getElementById('loading-screen').style.display = 'none';
+}
+
+async function init() {
+    updateLoadingScreen(0);
+
     scene = new THREE.Scene();
     camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
     renderer = new THREE.WebGLRenderer({ antialias: false });
     renderer.setSize(window.innerWidth, window.innerHeight);
     document.body.appendChild(renderer.domElement);
+
+    updateLoadingScreen(5);
 
     controls = new PointerLockControls(camera, document.body);
     scene.add(controls.getObject());
@@ -57,16 +73,28 @@ function init() {
     directionalLight.position.set(10, 100, 10);
     scene.add(directionalLight);
 
-    loadTextures().then(() => {
-        generateInitialChunks();
-        placePlayer();
-        animate();
-    });
+    updateLoadingScreen(10);
+
+    await loadTextures();
+    updateLoadingScreen(20);
+
+
+    placePlayer();
+    updateLoadingScreen(30);
 
     document.addEventListener('click', () => controls.lock());
     document.addEventListener('keydown', onKeyDown);
     document.addEventListener('keyup', onKeyUp);
     window.addEventListener('resize', onWindowResize);
+
+    updateLoadingScreen(40);
+
+    await generateInitialChunks();
+    
+
+    hideLoadingScreen();
+    
+    animate();
 }
 
 function loadTextures() {
@@ -106,44 +134,49 @@ function createChunkMaterial() {
         transparent: true,
     });
 }
-function createWaterMaterial() {
-    return new THREE.ShaderMaterial({
-        uniforms: {
-            time: { value: 0 },
-            color: { value: new THREE.Color(WATER_COLOR) },
-        },
-        vertexShader: `
-            uniform float time;
-            varying vec2 vUv;
-            void main() {
-                vUv = uv;
-                vec3 pos = position;
-                pos.y += sin(pos.x * 2.0 + time) * 0.5 + cos(pos.z * 2.0 + time) * 0.5;
-                gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
-            }
-        `,
-        fragmentShader: `
-            uniform vec3 color;
-            varying vec2 vUv;
-            void main() {
-                gl_FragColor = vec4(color, 0.1);
-            }
-        `,
-        transparent: true
-    });
-}
+// function createWaterMaterial() {
+//     return new THREE.ShaderMaterial({
+//         uniforms: {
+//             time: { value: 0 },
+//             color: { value: new THREE.Color(WATER_COLOR) },
+//         },
+//         vertexShader: `
+//             uniform float time;
+//             varying vec2 vUv;
+//             void main() {
+//                 vUv = uv;
+//                 vec3 pos = position;
+//                 pos.y += sin(pos.x * 2.0 + time) * 0.5 + cos(pos.z * 2.0 + time) * 0.5;
+//                 gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
+//             }
+//         `,
+//         fragmentShader: `
+//             uniform vec3 color;
+//             varying vec2 vUv;
+//             void main() {
+//                 gl_FragColor = vec4(color, 0.1);
+//             }
+//         `,
+//         transparent: true
+//     });
+// }
 
 
 function generateSurfaceHeight(x, z) {
-    const baseHeight = 0;
-    const hillHeight = 4;
-    const mountainHeight = 20;
-
-    const hillNoise = simplex2D(x * 0.08, z * 0.08) + 0.5;
-    const mountainNoise = simplex2D(x * 0.015, z * 0.015)  + 0.5;
-
-    return Math.floor(baseHeight + hillHeight * hillNoise + mountainHeight * Math.pow(mountainNoise, 2));
-}
+    const scale = 0.01;
+    const octaves = 4;
+    let noise = 0;
+    let amplitude = 1;
+    let frequency = 1;
+  
+    for (let i = 0; i < octaves; i++) {
+      noise += simplex2D(x * scale * frequency, z * scale * frequency) * amplitude;
+      amplitude *= 0.5;
+      frequency *= 2;
+    }
+  
+    return Math.floor((noise + 1) * 0.5 * CHUNK_SIZE) + CHUNK_SIZE / 2;
+  }
 
 function shouldGenerateBlock(x, y, z) {
     const surfaceHeight = generateSurfaceHeight(x, z);
@@ -202,7 +235,7 @@ function generateTree(x, y, z) {
 }
 
 // function generateChunk(chunkX, chunkY, chunkZ) {
-function generateChunk(chunkX, chunkY, chunkZ) {
+async function generateChunk(chunkX, chunkY, chunkZ) {
     const chunkKey = `${chunkX},${chunkY},${chunkZ}`;
     if (chunks[chunkKey]) return;
 
@@ -297,12 +330,17 @@ function generateChunk(chunkX, chunkY, chunkZ) {
 
     chunks[chunkKey] = { chunkGroup };
 }
-function generateInitialChunks() {
+async function generateInitialChunks() {
     const playerChunk = getPlayerChunk();
+    const totalChunks = Math.pow(2 * INITIAL_RENDER_DISTANCE + 1, 3);
+    let generatedChunks = 0;
+
     for (let x = -INITIAL_RENDER_DISTANCE; x <= INITIAL_RENDER_DISTANCE; x++) {
         for (let y = -INITIAL_RENDER_DISTANCE; y <= INITIAL_RENDER_DISTANCE; y++) {
             for (let z = -INITIAL_RENDER_DISTANCE; z <= INITIAL_RENDER_DISTANCE; z++) {
-                generateChunk(playerChunk.x + x, playerChunk.y + y, playerChunk.z + z);
+                await generateChunk(playerChunk.x + x, playerChunk.y + y, playerChunk.z + z);
+                generatedChunks++;
+                updateLoadingScreen(40 + (generatedChunks / totalChunks) * 20);
             }
         }
     }
