@@ -71,7 +71,7 @@ export default class VoxelWorld {
         const startX = cellX * cellSize;
         const startY = cellY * cellSize;
         const startZ = cellZ * cellSize;
-
+    
         for (let y = 0; y < cellSize; ++y) {
             const voxelY = startY + y;
             for (let z = 0; z < cellSize; ++z) {
@@ -105,7 +105,7 @@ export default class VoxelWorld {
                 }
             }
         }
-
+    
         return {
             positions,
             normals,
