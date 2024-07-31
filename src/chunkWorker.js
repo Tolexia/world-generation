@@ -1,4 +1,5 @@
-importScripts('simplex-noise.js', 'LZString.js');
+import { createNoise2D, createNoise3D } from 'simplex-noise';
+import LZString from 'lz-string';
 
 const simplex2D = createNoise2D();
 const simplex3D = createNoise3D();
@@ -44,7 +45,7 @@ function generateSurfaceHeight(x, z) {
   let frequency = 1;
 
   for (let i = 0; i < octaves; i++) {
-    noise += simplex2D.noise2D(x * scale * frequency, z * scale * frequency) * amplitude;
+    noise += simplex2D(x * scale * frequency, z * scale * frequency) * amplitude;
     amplitude *= 0.5;
     frequency *= 2;
   }
@@ -83,6 +84,6 @@ function isSnowCapped(height) {
 }
 
 function isInCavity(x, y, z) {
-  const caveNoise = simplex3D.noise3D(x * 0.05, y * 0.05, z * 0.05);
+  const caveNoise = simplex3D(x * 0.05, y * 0.05, z * 0.05);
   return caveNoise > 0.7;
 }
