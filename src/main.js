@@ -19,7 +19,7 @@ const simplex3D = createNoise3D();
 let woodMaterial, leavesMaterial;
 let woodInstances = [], leavesInstances = [], waterInstances = [];
 
-const INITIAL_RENDER_DISTANCE = RENDER_DISTANCE * 2;
+const INITIAL_RENDER_DISTANCE = RENDER_DISTANCE;
 let lastPlayerChunk = { x: 0, y: 0, z: 0 };
 const CHUNK_UPDATE_INTERVAL = 500; // Millisecondes
 let lastChunkUpdateTime = 0;
@@ -38,11 +38,26 @@ instanced_water_geometry.rotateX( -Math.PI / 2)
 
 
 let loadingProgress = 0;
+let requestId;
 
 function updateLoadingScreen(progress) {
     loadingProgress = progress;
-    document.getElementById('loading-bar').style.width = `${progress}%`;
-    document.getElementById('loading-text').textContent = `Chargement: ${Math.round(progress)}%`;
+    
+    if (!requestId) {
+        requestId = requestAnimationFrame(updateLoadingBar);
+    }
+}
+
+function updateLoadingBar() {
+    document.getElementById('loading-bar').style.width = `${loadingProgress.toFixed(1)}%`;
+    document.getElementById('loading-text').textContent = `Chargement: ${Math.round(loadingProgress)}%`;
+    
+    if (loadingProgress < 100) {
+        requestId = requestAnimationFrame(updateLoadingBar);
+    } else {
+        cancelAnimationFrame(requestId);
+        requestId = null;
+    }
 }
 
 function hideLoadingScreen() {
@@ -52,13 +67,15 @@ function hideLoadingScreen() {
 async function init() {
     updateLoadingScreen(0);
 
+    await new Promise(resolve => setTimeout(resolve, 0));
     scene = new THREE.Scene();
     camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
     renderer = new THREE.WebGLRenderer({ antialias: false });
     renderer.setSize(window.innerWidth, window.innerHeight);
     document.body.appendChild(renderer.domElement);
 
-    updateLoadingScreen(5);
+    updateLoadingScreen(20);
+    await new Promise(resolve => setTimeout(resolve, 0));
 
     controls = new PointerLockControls(camera, document.body);
     scene.add(controls.getObject());
@@ -73,24 +90,28 @@ async function init() {
     directionalLight.position.set(10, 100, 10);
     scene.add(directionalLight);
 
-    updateLoadingScreen(10);
+    updateLoadingScreen(40);
+    await new Promise(resolve => setTimeout(resolve, 0));
 
     await loadTextures();
-    updateLoadingScreen(20);
+    updateLoadingScreen(60);
+    await new Promise(resolve => setTimeout(resolve, 0));
 
+    await generateInitialChunks();
+    updateLoadingScreen(80);
+    await new Promise(resolve => setTimeout(resolve, 0));
 
     placePlayer();
-    updateLoadingScreen(30);
+    updateLoadingScreen(90);
+    await new Promise(resolve => setTimeout(resolve, 0));
 
     document.addEventListener('click', () => controls.lock());
     document.addEventListener('keydown', onKeyDown);
     document.addEventListener('keyup', onKeyUp);
     window.addEventListener('resize', onWindowResize);
 
-    updateLoadingScreen(40);
-
-    await generateInitialChunks();
-    
+    updateLoadingScreen(100);
+    await new Promise(resolve => setTimeout(resolve, 0));
 
     hideLoadingScreen();
     
@@ -340,7 +361,8 @@ async function generateInitialChunks() {
             for (let z = -INITIAL_RENDER_DISTANCE; z <= INITIAL_RENDER_DISTANCE; z++) {
                 await generateChunk(playerChunk.x + x, playerChunk.y + y, playerChunk.z + z);
                 generatedChunks++;
-                updateLoadingScreen(40 + (generatedChunks / totalChunks) * 20);
+                updateLoadingScreen(60 + (generatedChunks / totalChunks) * 20);
+                await new Promise(resolve => setTimeout(resolve, 0));
             }
         }
     }
@@ -433,7 +455,7 @@ function updateChunks() {
             }
         }
 
-        // Supprimer les chunks trop éloignés
+        // Décharger les chunks trop éloignés
         for (let chunkKey in chunks) {
             const [cx, cy, cz] = chunkKey.split(',').map(Number);
             if (Math.abs(cx - playerChunk.x) > RENDER_DISTANCE ||
