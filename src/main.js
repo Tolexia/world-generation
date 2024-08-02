@@ -4,6 +4,8 @@ import { createNoise2D, createNoise3D } from 'simplex-noise';
 import { InstancedUniformsMesh } from 'three-instanced-uniforms-mesh';
 import VoxelWorld from './voxelworld';
 import LZString from 'lz-string';
+import pako from 'pako';
+import throttle from 'simple-throttle';
 
 
 let scene, camera, renderer, controls;
@@ -234,7 +236,125 @@ function createInstancedMesh(geometry, material, count) {
     return new THREE.InstancedMesh(geometry, material, count);
 }
 
-function generateTree(x, y, z) {
+
+async function generateChunk(chunkX, chunkY, chunkZ) {
+    const chunkKey = `${chunkX},${chunkY},${chunkZ}`;
+    if (chunks[chunkKey]) return;
+
+    let chunkData = loadChunk(chunkX, chunkY, chunkZ);
+    if (!chunkData) {
+        chunkData = generateNewChunkData(chunkX, chunkY, chunkZ);
+        saveChunk(chunkX, chunkY, chunkZ, chunkData);
+    }
+
+    const world = new VoxelWorld({
+        cellSize: CHUNK_SIZE,
+        tileSize: 16,
+        tileTextureWidth: 112,
+        tileTextureHeight: 48,
+    });
+
+    // Reconstruire le monde à partir des données chargées
+    for (let i = 0; i < Object.values(chunkData.voxels).length; i++) {
+        const x = i % CHUNK_SIZE;
+        const y = Math.floor(i / CHUNK_SIZE) % CHUNK_SIZE;
+        const z = Math.floor(i / (CHUNK_SIZE * CHUNK_SIZE));
+        world.setVoxel(x, y, z, chunkData.voxels[i]);
+    }
+
+    const { positions, normals, uvs, indices } = world.generateGeometryDataForCell(0, 0, 0);
+
+    const geometry = new THREE.BufferGeometry();
+    const material = createChunkMaterial();
+
+    geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(positions), 3));
+    geometry.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(normals), 3));
+    geometry.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(uvs), 2));
+    geometry.setIndex(indices);
+
+    const mesh = new THREE.Mesh(geometry, material);
+
+    // Instanced Meshes
+    const matrix = new THREE.Matrix4();
+    function setInstancedMeshPositions(mesh, instances) {
+        instances.forEach((pos, i) => {
+            // Convertir en Vector3 si ce n'est pas déjà le cas
+            const position = pos instanceof THREE.Vector3 ? pos : new THREE.Vector3(pos.x, pos.y, pos.z);
+            matrix.setPosition(position);
+            mesh.setMatrixAt(i, matrix);
+        });
+        mesh.instanceMatrix.needsUpdate = true;
+    }
+
+    const woodMesh = createInstancedMesh(instanced_mesh_geometry, woodMaterial, chunkData.woodInstances.length);
+    const leavesMesh = createInstancedMesh(instanced_mesh_geometry, leavesMaterial, chunkData.leavesInstances.length);
+    const waterMesh = createInstancedMesh(instanced_water_geometry, waterMaterial, chunkData.waterInstances.length);
+
+    setInstancedMeshPositions(woodMesh, chunkData.woodInstances);
+    setInstancedMeshPositions(leavesMesh, chunkData.leavesInstances);
+    setInstancedMeshPositions(waterMesh, chunkData.waterInstances);
+
+    // Assurez-vous que les meshes instanciés sont correctement positionnés par rapport au chunk
+    woodMesh.position.set(0, 0, 0);
+    leavesMesh.position.set(0, 0, 0);
+    waterMesh.position.set(0, 0, 0);
+
+    const chunkGroup = new THREE.Group();
+    chunkGroup.add(mesh, woodMesh, leavesMesh, waterMesh);
+    chunkGroup.position.set(chunkX * CHUNK_SIZE, chunkY * CHUNK_SIZE, chunkZ * CHUNK_SIZE);
+    scene.add(chunkGroup);
+}
+
+function generateNewChunkData(chunkX, chunkY, chunkZ) {
+    const voxels = new Uint8Array(CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE);
+    const woodInstances = [];
+    const leavesInstances = [];
+    const waterInstances = [];
+
+    for (let y = 0; y < CHUNK_SIZE; y++) {
+        for (let z = 0; z < CHUNK_SIZE; z++) {
+            for (let x = 0; x < CHUNK_SIZE; x++) {
+                const worldX = chunkX * CHUNK_SIZE + x;
+                const worldY = chunkY * CHUNK_SIZE + y;
+                const worldZ = chunkZ * CHUNK_SIZE + z;
+                const surfaceHeight = generateSurfaceHeight(worldX, worldZ);
+
+                const voxelIndex = x + y * CHUNK_SIZE + z * CHUNK_SIZE * CHUNK_SIZE;
+
+                if (shouldGenerateBlock(worldX, worldY, worldZ)) {
+                    let voxelType = 1; // Par défaut, bloc de terre
+                    if (worldY === surfaceHeight) {
+                        if (isNearWater(worldX, worldY, worldZ)) {
+                            voxelType = 2; // Sable
+                        } else if (isMountain(surfaceHeight)) {
+                            voxelType = isSnowCapped(surfaceHeight) ? 3 : 4; // Neige ou pierre
+                        } else {
+                            voxelType = 5; // Herbe
+                            // Génération aléatoire d'arbres (seulement sur l'herbe)
+                            if (worldY === surfaceHeight && worldY > WATER_LEVEL && voxelType === 5 && Math.random() < 0.02) {
+                                generateTreeData(x, y + 1, z, woodInstances, leavesInstances);
+                            }
+                        }
+                    } else if (isInCavity(worldX, worldY, worldZ)) {
+                        voxelType = 6; // Caverne
+                    }
+                    voxels[voxelIndex] = voxelType;
+                } else if (worldY == WATER_LEVEL) {
+                    waterInstances.push(new THREE.Vector3(x+0.5, y+0.2, z+0.5));
+                }
+            }
+        }
+    }
+
+    return {
+        voxels,
+        woodInstances,
+        leavesInstances,
+        waterInstances
+    };
+}
+
+function generateTreeData(x, y, z, woodInstances, leavesInstances) {
     const treeHeight = 6;
     const leavesStart = 4;
     const leavesHeight = 4;
@@ -253,103 +373,6 @@ function generateTree(x, y, z) {
             }
         }
     }
-}
-
-// function generateChunk(chunkX, chunkY, chunkZ) {
-async function generateChunk(chunkX, chunkY, chunkZ) {
-    const chunkKey = `${chunkX},${chunkY},${chunkZ}`;
-    if (chunks[chunkKey]) return;
-
-    const world = new VoxelWorld({
-        cellSize: CHUNK_SIZE,
-        tileSize: 16,
-        tileTextureWidth: 112,
-        tileTextureHeight: 48,
-    });
-
-    woodInstances = [], leavesInstances = [], waterInstances = []
-
-    // Remplir le monde de voxels
-    for (let y = 0; y < CHUNK_SIZE; y++) {
-        for (let z = 0; z < CHUNK_SIZE; z++) {
-            for (let x = 0; x < CHUNK_SIZE; x++) {
-                const worldX = chunkX * CHUNK_SIZE + x;
-                const worldY = chunkY * CHUNK_SIZE + y;
-                const worldZ = chunkZ * CHUNK_SIZE + z;
-                const surfaceHeight = generateSurfaceHeight(worldX, worldZ);
-
-                if (shouldGenerateBlock(worldX, worldY, worldZ)) 
-                {
-                    let voxelType = 1; // Par défaut, bloc de terre
-                    if (worldY === surfaceHeight) 
-                    {
-                        if (isNearWater(worldX, worldY, worldZ)) {
-                            voxelType = 2; // Sable
-                        } 
-                        else if (isMountain(surfaceHeight)) 
-                        {
-                            voxelType = isSnowCapped(surfaceHeight) ? 3 : 4; // Neige ou pierre
-                        } 
-                        else 
-                        {
-                            voxelType = 5; // Herbe
-                            // Génération aléatoire d'arbres (seulement sur l'herbe)
-                            if (worldY === surfaceHeight && worldY > WATER_LEVEL && voxelType === 5 && Math.random() < 0.02) {
-                                generateTree(x, y + 1, z);
-                            }
-                        }
-                    } 
-                    else if (isInCavity(worldX, worldY, worldZ)) 
-                    {
-                        voxelType = 6; // Caverne
-                    }
-                    world.setVoxel(x, y, z, voxelType);
-                }
-                else if(worldY == WATER_LEVEL)
-                {
-                    waterInstances.push(new THREE.Vector3(x+0.5, y+0.2, z+0.5))
-                }
-            }
-        }
-    }
-
-    // Voxels
-    const { positions, normals, uvs, indices } = world.generateGeometryDataForCell(0, 0, 0);
-
-    const geometry = new THREE.BufferGeometry();
-    const material = createChunkMaterial();
-
-    geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(positions), 3));
-    geometry.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(normals), 3));
-    geometry.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(uvs), 2));
-    geometry.setIndex(indices);
-
-    const mesh = new THREE.Mesh(geometry, material);
-
-    // Instanced Meshes
-    const matrix = new THREE.Matrix4();
-    function setInstancedMeshPositions(mesh, instances) {
-        instances.forEach((pos, i) => {
-            matrix.setPosition(pos);
-            mesh.setMatrixAt(i, matrix);
-        });
-        mesh.instanceMatrix.needsUpdate = true;
-    }
-    
-    const woodMesh = createInstancedMesh(instanced_mesh_geometry, woodMaterial, woodInstances.length);
-    const leavesMesh = createInstancedMesh(instanced_mesh_geometry, leavesMaterial, leavesInstances.length);
-    const waterMesh = createInstancedMesh(instanced_water_geometry, waterMaterial, waterInstances.length);
-    setInstancedMeshPositions(woodMesh, woodInstances);
-    setInstancedMeshPositions(leavesMesh, leavesInstances);
-    setInstancedMeshPositions(waterMesh, waterInstances);
-
-
-    const chunkGroup = new THREE.Group();
-    chunkGroup.add(mesh, woodMesh, leavesMesh, waterMesh);
-    chunkGroup.position.set(chunkX * CHUNK_SIZE, chunkY * CHUNK_SIZE, chunkZ * CHUNK_SIZE);
-    scene.add(chunkGroup);
-
-    chunks[chunkKey] = { chunkGroup };
 }
 async function generateInitialChunks() {
     const playerChunk = getPlayerChunk();
@@ -370,10 +393,15 @@ async function generateInitialChunks() {
 }
 
 function placePlayer() {
-    const startX = CHUNK_SIZE / 2;
-    const startZ = CHUNK_SIZE / 2;
-    const startY = generateSurfaceHeight(startX, startZ) + 2;
-    controls.getObject().position.set(startX, startY, startZ);
+    const savedPosition = loadPlayerPosition();
+    if (savedPosition) {
+        controls.getObject().position.set(savedPosition.x, savedPosition.y, savedPosition.z);
+    } else {
+        const startX = CHUNK_SIZE / 2;
+        const startZ = CHUNK_SIZE / 2;
+        const startY = generateSurfaceHeight(startX, startZ) + 2;
+        controls.getObject().position.set(startX, startY, startZ);
+    }
 }
 
 const moveState = { forward: false, backward: false, left: false, right: false };
@@ -410,8 +438,43 @@ function updatePlayerPosition() {
     if (moveState.right) controls.getObject().position.addScaledVector(direction.cross(new THREE.Vector3(0, 1, 0)).normalize(), speed);
 }
 
+function saveChunk(chunkX, chunkY, chunkZ, chunkData) {
+    const chunkKey = `chunk_${chunkX}_${chunkY}_${chunkZ}`;
+    // const compressedData = pako.deflateRaw(JSON.stringify(chunkData), { to: 'string' });
+    const compressedData = LZString.compress(JSON.stringify(chunkData));
+    localStorage.setItem(chunkKey, compressedData);
+}
+
+function loadChunk(chunkX, chunkY, chunkZ) {
+    const chunkKey = `chunk_${chunkX}_${chunkY}_${chunkZ}`;
+    const compressedData = localStorage.getItem(chunkKey);
+    if (compressedData) {
+        // return JSON.parse(pako.inflateRaw(compressedData, { to: 'string' }));
+        return JSON.parse(LZString.decompress(compressedData));
+    }
+    return null;
+}
+
+function savePlayerPosition() {
+    const position = controls.getObject().position;
+    localStorage.setItem('playerPosition', JSON.stringify({
+        x: position.x,
+        y: position.y,
+        z: position.z
+    }));
+}
+
+function loadPlayerPosition() {
+    const savedPosition = localStorage.getItem('playerPosition');
+    if (savedPosition) {
+        return JSON.parse(savedPosition);
+    }
+    return null;
+}
+
 function getPlayerChunk() {
     const position = controls.getObject().position;
+    // console.log("position", position)
     return {
         x: Math.floor(position.x / CHUNK_SIZE),
         y: Math.floor(position.y / CHUNK_SIZE),
@@ -429,9 +492,20 @@ function isChunkVisible(chunkX, chunkY, chunkZ) {
       new THREE.Vector3((chunkX + 1) * CHUNK_SIZE, (chunkY + 1) * CHUNK_SIZE, (chunkZ + 1) * CHUNK_SIZE)
     );
     return frustum.intersectsBox(chunkBox);
-  }
+}
 
-function updateChunks() {
+async function generateChunks(chunks) {
+    return new Promise((resolve) => {
+        throttle(chunks, 1, (chunk) => {
+            generateChunk(chunk.x, chunk.y, chunk.z);
+        }
+        , () => {
+            resolve();
+        });
+    });
+} 
+
+async function updateChunks() {
     const currentTime = Date.now();
     if (currentTime - lastChunkUpdateTime < CHUNK_UPDATE_INTERVAL) return;
 
@@ -440,6 +514,7 @@ function updateChunks() {
         playerChunk.y !== lastPlayerChunk.y || 
         playerChunk.z !== lastPlayerChunk.z) {
         
+        const chunksToGenerate = [];
         for (let x = -RENDER_DISTANCE; x <= RENDER_DISTANCE; x++) {
             for (let y = -RENDER_DISTANCE; y <= RENDER_DISTANCE; y++) {
                 for (let z = -RENDER_DISTANCE; z <= RENDER_DISTANCE; z++) {
@@ -449,11 +524,13 @@ function updateChunks() {
                     const chunkKey = `${chunkX},${chunkY},${chunkZ}`;
                     
                     if (!chunks[chunkKey] && isChunkVisible(chunkX, chunkY, chunkZ)) {
-                        generateChunk(chunkX, chunkY, chunkZ);
+                        chunksToGenerate.push({x: chunkX, y: chunkY, z: chunkZ});
                     }
                 }
             }
         }
+
+        await generateChunks(chunksToGenerate);
 
         // Décharger les chunks trop éloignés
         for (let chunkKey in chunks) {
@@ -489,14 +566,24 @@ function updateUnderwaterEffect() {
 }
 
 const clock = new THREE.Clock()
+let lastSaveTime = 0;
+
 function animate() {
     updateUnderwaterEffect();
     updatePlayerPosition();
     updateChunks();
+
+    // Sauvegarde de la position du joueur toutes les 5 secondes
+    if (Date.now() - lastSaveTime > 5000) {
+        savePlayerPosition();
+        lastSaveTime = Date.now();
+    }
 
     const time = clock.getElapsedTime();
 
     renderer.render(scene, camera);
     requestAnimationFrame(animate);
 }
+
+
 init();

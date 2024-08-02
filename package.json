@@ -14,6 +14,8 @@
   },
   "dependencies": {
     "lz-string": "^1.5.0",
+    "pako": "^2.1.0",
+    "simple-throttle": "^0.0.1",
     "simplex-noise": "^4.0.2",
     "three": "^0.166.1",
     "three-instanced-uniforms-mesh": "^0.49.1",
