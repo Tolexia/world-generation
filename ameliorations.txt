@@ -1,9 +1,8 @@
 Voici quelques suggestions pour améliorer davantage votre projet :
 
-Variété des arbres : Vous pourriez ajouter différents types d'arbres (par exemple, des sapins, des bouleaux) avec des formes et des textures différentes.
-Optimisation : Si vous constatez des problèmes de performance avec de nombreux chunks chargés, vous pourriez implémenter un système d'occlusion culling pour ne rendre que les chunks visibles.
-Interaction : Vous pourriez ajouter la possibilité de couper les arbres et de récupérer du bois.
-Biomes : Implémentez différents biomes (forêt, désert, toundra) avec des distributions d'arbres et de blocs spécifiques.
-Éclairage dynamique : Ajoutez un cycle jour/nuit qui affecte l'éclairage des arbres et du terrain.
+Variété : ajouter de nouveaux types de blocs.
+Optimisation :  implémenter un système d'occlusion culling pour ne rendre que les chunks visibles.
+Interaction : permettre d'ajouter et de détruire des blocs.
+Biomes : Implémenter différents biomes (forêt, désert, toundra) avec des distributions d'arbres et de blocs spécifiques.
+Éclairage dynamique : Ajouter un cycle jour/nuit qui affecte l'éclairage des arbres et du terrain.
 Ombres : Implémenter des ombres projetées par les arbres pour un rendu plus réaliste.
-Animation : Ajoutez une légère animation aux feuilles des arbres pour simuler le vent.
