@@ -9,7 +9,7 @@ let chunks = {};
 const CHUNK_SIZE = 16;
 const RENDER_DISTANCE = 3;
 const WATER_LEVEL = 4; // Niveau de l'eau
-const WATER_COLOR = 0x0000cc; // Couleur de l'eau
+const WATER_COLOR = 0x0077be; // Couleur de l'eau
 
 const simplex2D = createNoise2D();
 const simplex3D = createNoise3D();
@@ -24,7 +24,7 @@ let lastChunkUpdateTime = 0;
 
 // const waterMaterial =  createWaterMaterial();
 const waterMaterial = new THREE.MeshPhongMaterial({
-    color: 0x0077be,
+    color: WATER_COLOR,
     side:THREE.DoubleSide,
     transparent: true,
     opacity: 0.95,
@@ -271,11 +271,11 @@ function isNearWater(x, y, z) {
 }
 
 function isMountain(height) {
-    return height > 24; // Ajustez cette valeur selon vos besoins
+    return height > 24;
 }
 
 function isSnowCapped(height) {
-    return height > 28; // Ajustez cette valeur selon vos besoins
+    return height > 28;
 }
 
 function createInstancedMesh(geometry, material, count) {
@@ -307,10 +307,8 @@ async function generateChunk(chunkX, chunkY, chunkZ) {
     const chunkKey = `${chunkX},${chunkY},${chunkZ}`;
     if (chunks[chunkKey]) return;
 
-    // Vérifiez d'abord si le chunk existe dans IndexedDB
     const existingChunk = await getChunkFromDB(chunkKey);
     if (existingChunk) {
-        // Si le chunk existe, chargez-le et retournez
         await loadChunkFromData(existingChunk, chunkX, chunkY, chunkZ);
         return;
     }
@@ -325,7 +323,6 @@ async function generateChunk(chunkX, chunkY, chunkZ) {
     });
 
 
-    // Remplir le monde de voxels
     for (let i = 0; i < voxels.length; i++) {
         const x = i % CHUNK_SIZE;
         const y = Math.floor(i / (CHUNK_SIZE * CHUNK_SIZE));
@@ -335,7 +332,6 @@ async function generateChunk(chunkX, chunkY, chunkZ) {
         }
     }
 
-    // Générer la géométrie et créer le mesh
     const { positions, normals, uvs, indices } = world.generateGeometryDataForCell(0, 0, 0);
     const geometry = new THREE.BufferGeometry();
     const material = createChunkMaterial();
@@ -347,7 +343,6 @@ async function generateChunk(chunkX, chunkY, chunkZ) {
 
     const mesh = new THREE.Mesh(geometry, material);
 
-    // Instanced Meshes
     const matrix = new THREE.Matrix4();
     function setInstancedMeshPositions(mesh, instances) {
         instances.forEach((pos, i) => {
@@ -357,7 +352,6 @@ async function generateChunk(chunkX, chunkY, chunkZ) {
         mesh.instanceMatrix.needsUpdate = true;
     }
 
-    // Créer les meshes instanciés
     const woodMesh = createInstancedMesh(instanced_mesh_geometry, woodMaterial, woodInstances.length);
     const leavesMesh = createInstancedMesh(instanced_mesh_geometry, leavesMaterial, leavesInstances.length);
     const waterMesh = createInstancedMesh(instanced_water_geometry, waterMaterial, waterInstances.length);
@@ -375,7 +369,7 @@ async function generateChunk(chunkX, chunkY, chunkZ) {
 
     const chunkData = {
         key: chunkKey,
-        voxels: Array.from(voxels), // Convertir Uint8Array en Array normal pour le stockage
+        voxels: Array.from(voxels),
         woodInstances: woodInstances.map(v => [v.x, v.y, v.z]),
         leavesInstances: leavesInstances.map(v => [v.x, v.y, v.z]),
         waterInstances: waterInstances.map(v => [v.x, v.y, v.z])
@@ -403,7 +397,6 @@ async function loadChunkFromData(chunkData, chunkX, chunkY, chunkZ) {
         }
     }
 
-    // Générer la géométrie et créer le mesh
     const { positions, normals, uvs, indices } = world.generateGeometryDataForCell(0, 0, 0);
     const geometry = new THREE.BufferGeometry();
     const material = createChunkMaterial();
@@ -415,7 +408,6 @@ async function loadChunkFromData(chunkData, chunkX, chunkY, chunkZ) {
 
     const mesh = new THREE.Mesh(geometry, material);
 
-    // Instanced Meshes
     const matrix = new THREE.Matrix4();
     function setInstancedMeshPositions(mesh, instances) {
         instances.forEach((pos, i) => {
@@ -425,7 +417,6 @@ async function loadChunkFromData(chunkData, chunkX, chunkY, chunkZ) {
         mesh.instanceMatrix.needsUpdate = true;
     }
 
-    // Créer les meshes instanciés
     const woodMesh = createInstancedMesh(instanced_mesh_geometry, woodMaterial, woodInstances.length);
     const leavesMesh = createInstancedMesh(instanced_mesh_geometry, leavesMaterial, leavesInstances.length);
     const waterMesh = createInstancedMesh(instanced_water_geometry, waterMaterial, waterInstances.length);
@@ -656,9 +647,11 @@ function updateUnderwaterEffect() {
     const playerY = controls.getObject().position.y;
     if (playerY <= WATER_LEVEL) {
         scene.fog = new THREE.FogExp2(0x0077be, 0.2);
+        scene.background = WATER_COLOR
         renderer.setClearColor(0x0077be);
     } else {
         scene.fog = null;
+        scene.background = new THREE.Color(0x87ceeb);
         renderer.setClearColor(0x87ceeb); // Couleur du ciel
     }
 }
